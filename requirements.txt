@@ -12,5 +12,8 @@ requests>=2.31.0             # Ollama (local)
 # Web UI
 gradio>=4.36.0
 
+# Security
+bcrypt>=4.0.0                # Password hashing (salted)
+
 # Utilities
 python-dotenv>=1.0.0         # Load .env file

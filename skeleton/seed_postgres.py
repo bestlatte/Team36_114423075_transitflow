@@ -13,6 +13,7 @@ import json
 import os
 import sys
 
+import bcrypt
 import psycopg2
 from psycopg2.extras import execute_values
 
@@ -52,67 +53,315 @@ def insert_many(cur, table, columns, rows):
     return cur.rowcount
 
 
+def _hash_password(plain: str) -> str:
+    return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
 # ── seeders ──────────────────────────────────────────────────────────────────
 
 def seed_metro_stations(cur):
     data = load("metro_stations.json")
-    # TODO: Design your table schema, then implement the INSERT logic here.
-    # Each item in `data` is a dict — inspect the JSON to see available fields.
-    pass
+    columns = [
+        "station_id", "name", "lines",
+        "is_interchange_metro", "interchange_metro_lines",
+        "is_interchange_national_rail", "interchange_national_rail_station_id",
+    ]
+    rows = [
+        (
+            d["station_id"],
+            d["name"],
+            d.get("lines", []),
+            d.get("is_interchange_metro", False),
+            d.get("interchange_metro_lines", []),
+            d.get("is_interchange_national_rail", False),
+            d.get("interchange_national_rail_station_id"),
+        )
+        for d in data
+    ]
+    n = insert_many(cur, "metro_stations", columns, rows)
+    print(f"  metro_stations: {n} rows")
 
 
 def seed_national_rail_stations(cur):
     data = load("national_rail_stations.json")
-    # TODO: Design your table schema, then implement the INSERT logic here.
-    pass
+    columns = [
+        "station_id", "name", "lines",
+        "is_interchange_national_rail", "interchange_national_rail_lines",
+        "is_interchange_metro", "interchange_metro_station_id",
+    ]
+    rows = [
+        (
+            d["station_id"],
+            d["name"],
+            d.get("lines", []),
+            d.get("is_interchange_national_rail", False),
+            d.get("interchange_national_rail_lines", []),
+            d.get("is_interchange_metro", False),
+            d.get("interchange_metro_station_id"),
+        )
+        for d in data
+    ]
+    n = insert_many(cur, "national_rail_stations", columns, rows)
+    print(f"  national_rail_stations: {n} rows")
 
 
 def seed_metro_schedules(cur):
     data = load("metro_schedules.json")
-    # TODO: Design your table schema, then implement the INSERT logic here.
-    pass
+
+    sched_cols = [
+        "schedule_id", "line", "direction",
+        "origin_station_id", "destination_station_id",
+        "first_train_time", "last_train_time",
+        "base_fare_usd", "per_stop_rate_usd",
+        "frequency_min", "operates_on",
+    ]
+    sched_rows = [
+        (
+            d["schedule_id"], d["line"], d["direction"],
+            d["origin_station_id"], d["destination_station_id"],
+            d["first_train_time"], d["last_train_time"],
+            d["base_fare_usd"], d["per_stop_rate_usd"],
+            d["frequency_min"], d.get("operates_on", []),
+        )
+        for d in data
+    ]
+    n = insert_many(cur, "metro_schedules", sched_cols, sched_rows)
+    print(f"  metro_schedules: {n} rows")
+
+    stop_cols = ["schedule_id", "station_id", "stop_order", "travel_time_from_origin_min"]
+    stop_rows = []
+    for d in data:
+        times = d["travel_time_from_origin_min"]
+        for order, sid in enumerate(d["stops_in_order"], start=1):
+            stop_rows.append((d["schedule_id"], sid, order, times[sid]))
+    n = insert_many(cur, "metro_schedule_stops", stop_cols, stop_rows)
+    print(f"  metro_schedule_stops: {n} rows")
 
 
 def seed_national_rail_schedules(cur):
     data = load("national_rail_schedules.json")
-    # TODO: Design your table schema, then implement the INSERT logic here.
-    pass
+
+    sched_cols = [
+        "schedule_id", "line", "service_type", "direction",
+        "origin_station_id", "destination_station_id",
+        "first_train_time", "last_train_time",
+        "frequency_min", "operates_on", "passed_through_stations",
+    ]
+    sched_rows = [
+        (
+            d["schedule_id"], d["line"], d["service_type"], d["direction"],
+            d["origin_station_id"], d["destination_station_id"],
+            d["first_train_time"], d["last_train_time"],
+            d["frequency_min"], d.get("operates_on", []),
+            d.get("passed_through_stations", []),
+        )
+        for d in data
+    ]
+    n = insert_many(cur, "national_rail_schedules", sched_cols, sched_rows)
+    print(f"  national_rail_schedules: {n} rows")
+
+    stop_cols = ["schedule_id", "station_id", "stop_order", "travel_time_from_origin_min"]
+    stop_rows = []
+    for d in data:
+        times = d["travel_time_from_origin_min"]
+        for order, sid in enumerate(d["stops_in_order"], start=1):
+            stop_rows.append((d["schedule_id"], sid, order, times[sid]))
+    n = insert_many(cur, "national_rail_schedule_stops", stop_cols, stop_rows)
+    print(f"  national_rail_schedule_stops: {n} rows")
+
+    fare_cols = ["schedule_id", "fare_class", "base_fare_usd", "per_stop_rate_usd"]
+    fare_rows = []
+    for d in data:
+        for fc, rates in d["fare_classes"].items():
+            fare_rows.append((
+                d["schedule_id"], fc,
+                rates["base_fare_usd"], rates["per_stop_rate_usd"],
+            ))
+    n = insert_many(cur, "national_rail_fare_classes", fare_cols, fare_rows)
+    print(f"  national_rail_fare_classes: {n} rows")
 
 
 def seed_seat_layouts(cur):
     data = load("national_rail_seat_layouts.json")
-    # TODO: Design your table schema, then implement the INSERT logic here.
-    pass
+    cols = ["schedule_id", "coach", "fare_class", "seat_id", "seat_row", "seat_column"]
+    rows = []
+    for layout in data:
+        sid = layout["schedule_id"]
+        for coach_info in layout["coaches"]:
+            coach = coach_info["coach"]
+            fc = coach_info["fare_class"]
+            for seat in coach_info["seats"]:
+                rows.append((
+                    sid, coach, fc,
+                    seat["seat_id"], seat["row"], seat["column"],
+                ))
+    n = insert_many(cur, "seats", cols, rows)
+    print(f"  seats: {n} rows")
 
 
 def seed_users(cur):
     data = load("registered_users.json")
-    # TODO: Design your table schema, then implement the INSERT logic here.
-    pass
+
+    user_cols = [
+        "user_id", "first_name", "surname", "full_name",
+        "email", "phone", "date_of_birth", "is_active", "registered_at",
+    ]
+    cred_cols = ["user_id", "password_hash", "secret_question", "secret_answer"]
+
+    user_rows = []
+    cred_rows = []
+    for d in data:
+        parts = d["full_name"].split(" ", 1)
+        first_name = parts[0]
+        surname = parts[1] if len(parts) > 1 else ""
+
+        user_rows.append((
+            d["user_id"], first_name, surname, d["full_name"],
+            d["email"], d.get("phone"), d.get("date_of_birth"),
+            d.get("is_active", True), d["registered_at"],
+        ))
+
+        cred_rows.append((
+            d["user_id"],
+            _hash_password(d["password"]),
+            d["secret_question"],
+            d["secret_answer"],
+        ))
+
+    n = insert_many(cur, "users", user_cols, user_rows)
+    print(f"  users: {n} rows")
+
+    n = insert_many(cur, "user_credentials", cred_cols, cred_rows)
+    print(f"  user_credentials: {n} rows")
 
 
 def seed_national_rail_bookings(cur):
     data = load("bookings.json")
-    # TODO: Design your table schema, then implement the INSERT logic here.
-    pass
+    cols = [
+        "booking_id", "user_id", "schedule_id",
+        "origin_station_id", "destination_station_id",
+        "travel_date", "departure_time", "ticket_type", "fare_class",
+        "coach", "seat_id", "stops_travelled", "amount_usd",
+        "status", "booked_at", "travelled_at",
+    ]
+    rows = [
+        (
+            d["booking_id"], d["user_id"], d["schedule_id"],
+            d["origin_station_id"], d["destination_station_id"],
+            d["travel_date"], d["departure_time"], d["ticket_type"], d["fare_class"],
+            d["coach"], d["seat_id"], d["stops_travelled"], d["amount_usd"],
+            d["status"], d["booked_at"], d.get("travelled_at"),
+        )
+        for d in data
+    ]
+    n = insert_many(cur, "bookings", cols, rows)
+    print(f"  bookings: {n} rows")
 
 
 def seed_metro_travels(cur):
     data = load("metro_travel_history.json")
-    # TODO: Design your table schema, then implement the INSERT logic here.
-    pass
+    cols = [
+        "trip_id", "user_id", "schedule_id",
+        "origin_station_id", "destination_station_id",
+        "travel_date", "ticket_type", "day_pass_ref",
+        "stops_travelled", "amount_usd", "status",
+        "purchased_at", "travelled_at",
+    ]
+    rows = [
+        (
+            d["trip_id"], d["user_id"], d["schedule_id"],
+            d["origin_station_id"], d["destination_station_id"],
+            d["travel_date"], d["ticket_type"], d.get("day_pass_ref"),
+            d.get("stops_travelled"), d["amount_usd"], d["status"],
+            d.get("purchased_at"), d.get("travelled_at"),
+        )
+        for d in data
+    ]
+    n = insert_many(cur, "metro_travel_history", cols, rows)
+    print(f"  metro_travel_history: {n} rows")
 
 
 def seed_payments(cur):
     data = load("payments.json")
-    # TODO: Design your table schema, then implement the INSERT logic here.
-    pass
+    cols = ["payment_id", "booking_id", "amount_usd", "method", "status", "paid_at"]
+    rows = [
+        (d["payment_id"], d["booking_id"], d["amount_usd"], d["method"], d["status"], d["paid_at"])
+        for d in data
+    ]
+    n = insert_many(cur, "payments", cols, rows)
+    print(f"  payments: {n} rows")
 
 
 def seed_feedback(cur):
     data = load("feedback.json")
-    # TODO: Design your table schema, then implement the INSERT logic here.
-    pass
+    cols = ["feedback_id", "booking_id", "user_id", "rating", "comment", "submitted_at"]
+    rows = [
+        (d["feedback_id"], d["booking_id"], d["user_id"], d["rating"], d.get("comment"), d["submitted_at"])
+        for d in data
+    ]
+    n = insert_many(cur, "feedbacks", cols, rows)
+    print(f"  feedbacks: {n} rows")
+
+
+def seed_ticket_types(cur):
+    data = load("ticket_types.json")
+    cols = ["ticket_type", "display_name", "description", "available_on"]
+    rows = [
+        (d["ticket_type"], d["display_name"], d["description"], d.get("available_on", []))
+        for d in data
+    ]
+    n = insert_many(cur, "ticket_types", cols, rows)
+    print(f"  ticket_types: {n} rows")
+
+
+def seed_refund_policies(cur):
+    data = load("refund_policy.json")
+
+    policy_cols = ["policy_id", "label", "network_type", "service_type", "notes"]
+    window_cols = [
+        "policy_id", "window_id", "label", "condition_text",
+        "hours_before_departure_min", "hours_before_departure_max",
+        "refund_percent", "admin_fee_usd",
+    ]
+
+    policy_rows = []
+    window_rows = []
+
+    for d in data:
+        applies = d.get("applies_to", {})
+        notes_parts = []
+        if d.get("return_ticket_notes"):
+            notes_parts.append(d["return_ticket_notes"])
+        if d.get("no_show_policy"):
+            notes_parts.append(d["no_show_policy"])
+        if d.get("notes"):
+            notes_parts.append(d["notes"])
+
+        policy_rows.append((
+            d["policy_id"],
+            d["label"],
+            applies.get("network_type", "all"),
+            applies.get("service_type"),
+            " | ".join(notes_parts) if notes_parts else None,
+        ))
+
+        for w in d.get("cancellation_windows", []):
+            window_rows.append((
+                d["policy_id"],
+                w["window_id"],
+                w["label"],
+                w.get("condition", w.get("condition_text", "")),
+                w.get("hours_before_departure_min"),
+                w.get("hours_before_departure_max"),
+                w.get("refund_percent", 0),
+                w.get("admin_fee_usd", 0.00),
+            ))
+
+    n = insert_many(cur, "refund_policies", policy_cols, policy_rows)
+    print(f"  refund_policies: {n} rows")
+
+    n = insert_many(cur, "refund_policy_windows", window_cols, window_rows)
+    print(f"  refund_policy_windows: {n} rows")
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -135,6 +384,8 @@ def main():
         seed_metro_travels(cur)
         seed_payments(cur)
         seed_feedback(cur)
+        seed_ticket_types(cur)
+        seed_refund_policies(cur)
         conn.commit()
         print("\nAll done. Database seeded successfully.")
     except Exception as e:
