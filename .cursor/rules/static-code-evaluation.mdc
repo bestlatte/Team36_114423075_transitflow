@@ -1,0 +1,74 @@
+---
+description: IM2002 train project static code evaluation rules for relational schema, query implementation, seeding, password security, idempotency, and scaffold boundaries.
+alwaysApply: true
+---
+
+# Static Code Evaluation Rules
+
+These rules must be followed for the IM2002 DBMGT train project. They are grading-critical and apply whenever editing schema, query, seed, authentication, or database initialization code.
+
+## Fatal Requirements
+
+- Never store plaintext passwords.
+  - `register_user()` must hash passwords before writing them to the database.
+  - Acceptable algorithms: bcrypt, argon2, scrypt, or PBKDF2.
+  - Do not use MD5, SHA-only hashing, or any unsalted fast hash for passwords.
+  - Importing a password hashing library is not enough; the registration function must actually call it.
+- All seed operations must be idempotent.
+  - PostgreSQL seed inserts must use `INSERT ... ON CONFLICT DO NOTHING` or an equivalent upsert.
+  - Neo4j seed logic must use `MERGE` instead of `CREATE`.
+  - Re-running seed scripts must not crash and must not create duplicate data.
+- Do not implement or modify scaffold-owned objects unless the assignment explicitly requires it.
+  - Leave scaffold items such as `policy_documents`, `auto_select_adjacent_seats`, and `query_policy_vector_search` alone.
+
+## Task 1: Relational Schema
+
+Target file: `databases/relational/schema.sql`
+
+- The schema must include all entities required by the train booking system, including schedules, fares, bookings, seat layouts, and users.
+- Use strict data types:
+  - Money and fares must use `NUMERIC` or `DECIMAL`.
+  - Date/time columns must use `TIMESTAMPTZ`.
+  - Status flags must use `BOOLEAN`.
+- Normalize schedule stops.
+  - Do not store station stop order as an array column.
+  - Use a separate junction table for schedule stops.
+  - The junction table must include a `stop_order` column.
+- Every primary key definition must include a comment explaining why UUID or SERIAL is used.
+- The deletion strategy must be consistent across the schema.
+  - Choose soft delete or hard delete.
+  - Document the chosen strategy in comments.
+- Every foreign key must explicitly specify one of:
+  - `ON DELETE CASCADE`
+  - `ON DELETE RESTRICT`
+  - `ON DELETE SET NULL`
+
+## Task 2: PostgreSQL Query Functions
+
+Target file: `databases/relational/queries.py`
+
+- No required function may contain `raise NotImplementedError` or a placeholder-only `pass`.
+- Core query functions must be implemented with the required return shapes:
+  - national rail availability
+  - metro timetable
+  - national rail fare calculation
+  - metro fare calculation
+- Fare calculations must use the correct formula:
+  - base fare plus per-station increment.
+- `query_available_seats` must exclude seats that are already booked.
+- `query_user_profile` must return `None` when no user is found by email; it must not raise an exception for that case.
+- `query_user_bookings` must always return a dictionary with both keys:
+  - `national_rail`
+  - `metro`
+  Even if either value is an empty list.
+- `execute_booking` must insert the booking and payment in a single transaction.
+  - Use one `conn.commit()` after both inserts succeed.
+  - Do not commit once for booking and again for payment.
+- Login verification must use the same password hashing algorithm as registration.
+- Security-question answer checks must be case-insensitive.
+
+## Task 3: PostgreSQL Seed Static Check
+
+- All 10 PostgreSQL seed functions must be implemented.
+- Every seed function must handle conflicts with `ON CONFLICT`, upsert, or equivalent idempotent logic.
+- Seed functions must be safe to run repeatedly.
