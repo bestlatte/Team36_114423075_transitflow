@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import random
 import string
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from typing import Optional
 
 import bcrypt
@@ -60,6 +60,39 @@ def _hash_password(plain: str) -> str:
 
 def _verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+
+
+def _date_at_utc(date_text: str) -> datetime:
+    parsed = datetime.strptime(date_text, "%Y-%m-%d")
+    return parsed.replace(tzinfo=timezone.utc)
+
+
+def _combine_travel_date_and_service_time(date_text: str, service_time) -> datetime:
+    parsed_date = datetime.strptime(date_text, "%Y-%m-%d")
+    if isinstance(service_time, datetime):
+        parsed_time = service_time.timetz()
+    else:
+        parsed_time = datetime.strptime(str(service_time)[:5], "%H:%M").time()
+    return datetime(
+        parsed_date.year,
+        parsed_date.month,
+        parsed_date.day,
+        parsed_time.hour,
+        parsed_time.minute,
+        tzinfo=timezone.utc,
+    )
+
+
+def _time_text(value) -> str:
+    if isinstance(value, datetime):
+        return value.strftime("%H:%M:%S")
+    return str(value)
+
+
+def _date_text(value) -> str:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    return str(value)
 
 
 # ── NATIONAL RAIL AVAILABILITY ────────────────────────────────────────────────
@@ -118,8 +151,8 @@ def query_national_rail_availability(
             schedules = [dict(row) for row in cur.fetchall()]
 
             for sched in schedules:
-                sched["first_train_time"] = str(sched["first_train_time"])
-                sched["last_train_time"] = str(sched["last_train_time"])
+                sched["first_train_time"] = _time_text(sched["first_train_time"])
+                sched["last_train_time"] = _time_text(sched["last_train_time"])
 
                 cur.execute("""
                     SELECT fare_class, base_fare_usd, per_stop_rate_usd
@@ -143,7 +176,7 @@ def query_national_rail_availability(
                         SELECT COUNT(*) AS booked
                         FROM bookings
                         WHERE schedule_id = %s
-                            AND travel_date = %s
+                            AND travel_date::date = %s::date
                             AND status != 'cancelled'
                             AND is_deleted = FALSE
                     """, (sched["schedule_id"], travel_date))
@@ -247,8 +280,8 @@ def query_metro_schedules(origin_id: str, destination_id: str) -> list[dict]:
             results = []
             for row in cur.fetchall():
                 d = dict(row)
-                d["first_train_time"] = str(d["first_train_time"])
-                d["last_train_time"] = str(d["last_train_time"])
+                d["first_train_time"] = _time_text(d["first_train_time"])
+                d["last_train_time"] = _time_text(d["last_train_time"])
                 d["base_fare_usd"] = float(d["base_fare_usd"])
                 d["per_stop_rate_usd"] = float(d["per_stop_rate_usd"])
                 total = d["base_fare_usd"] + d["stops_travelled"] * d["per_stop_rate_usd"]
@@ -303,7 +336,7 @@ def query_available_seats(
                 SELECT b.seat_id
                 FROM bookings b
                 WHERE b.schedule_id = %s
-                    AND b.travel_date = %s
+                    AND b.travel_date::date = %s::date
                     AND b.status != 'cancelled'
                     AND b.is_deleted = FALSE
             )
@@ -356,7 +389,7 @@ def query_user_profile(user_email: str) -> Optional[dict]:
                 return None
             d = dict(row)
             if d.get("date_of_birth"):
-                d["date_of_birth"] = str(d["date_of_birth"])
+                d["date_of_birth"] = _date_text(d["date_of_birth"])
             return d
 
 
@@ -394,8 +427,8 @@ def query_user_bookings(user_email: str) -> dict:
             nr_bookings = []
             for row in cur.fetchall():
                 d = dict(row)
-                d["travel_date"] = str(d["travel_date"])
-                d["departure_time"] = str(d["departure_time"])
+                d["travel_date"] = _date_text(d["travel_date"])
+                d["departure_time"] = _time_text(d["departure_time"])
                 d["amount_usd"] = float(d["amount_usd"])
                 if d.get("booked_at"):
                     d["booked_at"] = d["booked_at"].isoformat()
@@ -421,7 +454,7 @@ def query_user_bookings(user_email: str) -> dict:
             metro_trips = []
             for row in cur.fetchall():
                 d = dict(row)
-                d["travel_date"] = str(d["travel_date"])
+                d["travel_date"] = _date_text(d["travel_date"])
                 d["amount_usd"] = float(d["amount_usd"])
                 if d.get("purchased_at"):
                     d["purchased_at"] = d["purchased_at"].isoformat()
@@ -522,8 +555,9 @@ def execute_booking(
 
                 cur.execute("""
                     SELECT booking_id FROM bookings
-                    WHERE schedule_id = %s AND seat_id = %s AND travel_date = %s
+                    WHERE schedule_id = %s AND seat_id = %s
                         AND status != 'cancelled' AND is_deleted = FALSE
+                        AND travel_date::date = %s::date
                 """, (schedule_id, seat_id, travel_date))
                 if cur.fetchone():
                     return False, f"Seat {seat_id} is already booked for {travel_date}."
@@ -540,7 +574,11 @@ def execute_booking(
                 WHERE schedule_id = %s AND is_deleted = FALSE
             """, (schedule_id,))
             sched_row = cur.fetchone()
-            departure_time = str(sched_row["first_train_time"]) if sched_row else "07:00"
+            departure_time = (
+                _combine_travel_date_and_service_time(travel_date, sched_row["first_train_time"])
+                if sched_row else _combine_travel_date_and_service_time(travel_date, "07:00")
+            )
+            travel_date_ts = _date_at_utc(travel_date)
 
             booking_id = _gen_booking_id()
             payment_id = _gen_payment_id()
@@ -557,7 +595,7 @@ def execute_booking(
             """, (
                 booking_id, user_id, schedule_id,
                 origin_station_id, destination_station_id,
-                travel_date, departure_time, ticket_type, fare_class,
+                travel_date_ts, departure_time, ticket_type, fare_class,
                 coach, seat_id, stops_travelled, amount,
                 now,
             ))
@@ -577,7 +615,7 @@ def execute_booking(
             "origin_station_id": origin_station_id,
             "destination_station_id": destination_station_id,
             "travel_date": travel_date,
-            "departure_time": departure_time,
+            "departure_time": _time_text(departure_time),
             "ticket_type": ticket_type,
             "fare_class": fare_class,
             "coach": coach,
@@ -633,11 +671,13 @@ def execute_cancellation(booking_id: str, user_id: str) -> tuple[bool, dict | st
 
             policy_id = "RF001" if service_type == "normal" else "RF002"
 
-            departure_dt = datetime.combine(
-                bk["travel_date"],
-                bk["departure_time"],
-                tzinfo=timezone.utc,
-            )
+            departure_dt = bk["departure_time"]
+            if isinstance(departure_dt, time):
+                travel_date = bk["travel_date"]
+                travel_day = travel_date.date() if isinstance(travel_date, datetime) else travel_date
+                departure_dt = datetime.combine(travel_day, departure_dt)
+            if departure_dt.tzinfo is None:
+                departure_dt = departure_dt.replace(tzinfo=timezone.utc)
             now = datetime.now(timezone.utc)
             hours_until = (departure_dt - now).total_seconds() / 3600.0
 
@@ -740,7 +780,7 @@ def register_user(
             new_user_id = f"RU{max_num + 1:02d}"
 
             full_name = f"{first_name} {surname}"
-            dob = f"{year_of_birth}-01-01"
+            dob = _date_at_utc(f"{year_of_birth}-01-01")
             now = datetime.now(timezone.utc)
             password_hash = _hash_password(password)
 
@@ -790,7 +830,7 @@ def login_user(email: str, password: str) -> Optional[dict]:
                 return None
 
             if row.get("date_of_birth"):
-                row["date_of_birth"] = str(row["date_of_birth"])
+                row["date_of_birth"] = _date_text(row["date_of_birth"])
             del row["password_hash"]
             return row
 

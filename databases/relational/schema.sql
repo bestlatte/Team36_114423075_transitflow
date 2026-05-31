@@ -9,12 +9,17 @@
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- Deletion strategy: relational application tables use soft delete via is_deleted
+-- so historical bookings, payments, and audit-sensitive data are preserved.
+-- Foreign keys therefore use ON DELETE RESTRICT to prevent hard deletion of
+-- referenced rows while dependent records still exist.
+
 -- ============================================================
 --  INFRASTRUCTURE: Stations
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS metro_stations (
-    id                                   BIGSERIAL    PRIMARY KEY,
+    id                                   BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     station_id                           VARCHAR(10)  NOT NULL UNIQUE,
     name                                 VARCHAR(100) NOT NULL,
     lines                                TEXT[]       NOT NULL DEFAULT '{}',
@@ -28,7 +33,7 @@ CREATE TABLE IF NOT EXISTS metro_stations (
 );
 
 CREATE TABLE IF NOT EXISTS national_rail_stations (
-    id                                   BIGSERIAL    PRIMARY KEY,
+    id                                   BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     station_id                           VARCHAR(10)  NOT NULL UNIQUE,
     name                                 VARCHAR(100) NOT NULL,
     lines                                TEXT[]       NOT NULL DEFAULT '{}',
@@ -46,14 +51,14 @@ CREATE TABLE IF NOT EXISTS national_rail_stations (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS metro_schedules (
-    id                     BIGSERIAL      PRIMARY KEY,
+    id                     BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     schedule_id            VARCHAR(20)    NOT NULL UNIQUE,
     line                   VARCHAR(10)    NOT NULL,
     direction              VARCHAR(20)    NOT NULL,
-    origin_station_id      VARCHAR(10)    NOT NULL,
-    destination_station_id VARCHAR(10)    NOT NULL,
-    first_train_time       TIME           NOT NULL,
-    last_train_time        TIME           NOT NULL,
+    origin_station_id      VARCHAR(10)    NOT NULL REFERENCES metro_stations(station_id) ON DELETE RESTRICT,
+    destination_station_id VARCHAR(10)    NOT NULL REFERENCES metro_stations(station_id) ON DELETE RESTRICT,
+    first_train_time       TIMESTAMPTZ    NOT NULL,
+    last_train_time        TIMESTAMPTZ    NOT NULL,
     base_fare_usd          DECIMAL(10,2)  NOT NULL,
     per_stop_rate_usd      DECIMAL(10,2)  NOT NULL,
     frequency_min          INTEGER        NOT NULL,
@@ -64,9 +69,9 @@ CREATE TABLE IF NOT EXISTS metro_schedules (
 );
 
 CREATE TABLE IF NOT EXISTS metro_schedule_stops (
-    id                          BIGSERIAL    PRIMARY KEY,
-    schedule_id                 VARCHAR(20)  NOT NULL REFERENCES metro_schedules(schedule_id),
-    station_id                  VARCHAR(10)  NOT NULL,
+    id                          BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    schedule_id                 VARCHAR(20)  NOT NULL REFERENCES metro_schedules(schedule_id) ON DELETE RESTRICT,
+    station_id                  VARCHAR(10)  NOT NULL REFERENCES metro_stations(station_id) ON DELETE RESTRICT,
     stop_order                  INTEGER      NOT NULL,
     travel_time_from_origin_min INTEGER      NOT NULL DEFAULT 0,
     created_at                  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
@@ -80,27 +85,26 @@ CREATE TABLE IF NOT EXISTS metro_schedule_stops (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS national_rail_schedules (
-    id                     BIGSERIAL      PRIMARY KEY,
+    id                     BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     schedule_id            VARCHAR(20)    NOT NULL UNIQUE,
     line                   VARCHAR(10)    NOT NULL,
     service_type           VARCHAR(20)    NOT NULL,
     direction              VARCHAR(20)    NOT NULL,
-    origin_station_id      VARCHAR(10)    NOT NULL,
-    destination_station_id VARCHAR(10)    NOT NULL,
-    first_train_time       TIME           NOT NULL,
-    last_train_time        TIME           NOT NULL,
+    origin_station_id      VARCHAR(10)    NOT NULL REFERENCES national_rail_stations(station_id) ON DELETE RESTRICT,
+    destination_station_id VARCHAR(10)    NOT NULL REFERENCES national_rail_stations(station_id) ON DELETE RESTRICT,
+    first_train_time       TIMESTAMPTZ    NOT NULL,
+    last_train_time        TIMESTAMPTZ    NOT NULL,
     frequency_min          INTEGER        NOT NULL,
     operates_on            TEXT[]         NOT NULL DEFAULT '{}',
-    passed_through_stations TEXT[]        NOT NULL DEFAULT '{}',
     created_at             TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
     updated_at             TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
     is_deleted             BOOLEAN        NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS national_rail_schedule_stops (
-    id                          BIGSERIAL    PRIMARY KEY,
-    schedule_id                 VARCHAR(20)  NOT NULL REFERENCES national_rail_schedules(schedule_id),
-    station_id                  VARCHAR(10)  NOT NULL,
+    id                          BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    schedule_id                 VARCHAR(20)  NOT NULL REFERENCES national_rail_schedules(schedule_id) ON DELETE RESTRICT,
+    station_id                  VARCHAR(10)  NOT NULL REFERENCES national_rail_stations(station_id) ON DELETE RESTRICT,
     stop_order                  INTEGER      NOT NULL,
     travel_time_from_origin_min INTEGER      NOT NULL DEFAULT 0,
     created_at                  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
@@ -110,8 +114,8 @@ CREATE TABLE IF NOT EXISTS national_rail_schedule_stops (
 );
 
 CREATE TABLE IF NOT EXISTS national_rail_fare_classes (
-    id                BIGSERIAL      PRIMARY KEY,
-    schedule_id       VARCHAR(20)    NOT NULL REFERENCES national_rail_schedules(schedule_id),
+    id                BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    schedule_id       VARCHAR(20)    NOT NULL REFERENCES national_rail_schedules(schedule_id) ON DELETE RESTRICT,
     fare_class        VARCHAR(20)    NOT NULL,
     base_fare_usd     DECIMAL(10,2)  NOT NULL,
     per_stop_rate_usd DECIMAL(10,2)  NOT NULL,
@@ -126,8 +130,8 @@ CREATE TABLE IF NOT EXISTS national_rail_fare_classes (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS seats (
-    id          BIGSERIAL    PRIMARY KEY,
-    schedule_id VARCHAR(20)  NOT NULL REFERENCES national_rail_schedules(schedule_id),
+    id          BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    schedule_id VARCHAR(20)  NOT NULL REFERENCES national_rail_schedules(schedule_id) ON DELETE RESTRICT,
     coach       VARCHAR(5)   NOT NULL,
     fare_class  VARCHAR(20)  NOT NULL,
     seat_id     VARCHAR(10)  NOT NULL,
@@ -144,14 +148,14 @@ CREATE TABLE IF NOT EXISTS seats (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS users (
-    id            BIGSERIAL    PRIMARY KEY,
+    id            BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     user_id       VARCHAR(10)  NOT NULL UNIQUE,
     first_name    VARCHAR(50)  NOT NULL,
     surname       VARCHAR(50)  NOT NULL,
     full_name     VARCHAR(100) NOT NULL,
     email         VARCHAR(200) NOT NULL UNIQUE,
     phone         VARCHAR(20),
-    date_of_birth DATE,
+    date_of_birth TIMESTAMPTZ,
     is_active     BOOLEAN      NOT NULL DEFAULT TRUE,
     registered_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
@@ -165,8 +169,8 @@ CREATE TABLE IF NOT EXISTS users (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS user_credentials (
-    id              BIGSERIAL    PRIMARY KEY,
-    user_id         VARCHAR(10)  NOT NULL UNIQUE REFERENCES users(user_id),
+    id              BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    user_id         VARCHAR(10)  NOT NULL UNIQUE REFERENCES users(user_id) ON DELETE RESTRICT,
     password_hash   VARCHAR(255) NOT NULL,
     secret_question VARCHAR(255) NOT NULL,
     secret_answer   VARCHAR(255) NOT NULL,
@@ -180,14 +184,14 @@ CREATE TABLE IF NOT EXISTS user_credentials (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS bookings (
-    id                     BIGSERIAL      PRIMARY KEY,
+    id                     BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     booking_id             VARCHAR(20)    NOT NULL UNIQUE,
-    user_id                VARCHAR(10)    NOT NULL REFERENCES users(user_id),
-    schedule_id            VARCHAR(20)    NOT NULL REFERENCES national_rail_schedules(schedule_id),
-    origin_station_id      VARCHAR(10)    NOT NULL,
-    destination_station_id VARCHAR(10)    NOT NULL,
-    travel_date            DATE           NOT NULL,
-    departure_time         TIME           NOT NULL,
+    user_id                VARCHAR(10)    NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
+    schedule_id            VARCHAR(20)    NOT NULL REFERENCES national_rail_schedules(schedule_id) ON DELETE RESTRICT,
+    origin_station_id      VARCHAR(10)    NOT NULL REFERENCES national_rail_stations(station_id) ON DELETE RESTRICT,
+    destination_station_id VARCHAR(10)    NOT NULL REFERENCES national_rail_stations(station_id) ON DELETE RESTRICT,
+    travel_date            TIMESTAMPTZ    NOT NULL,
+    departure_time         TIMESTAMPTZ    NOT NULL,
     ticket_type            VARCHAR(20)    NOT NULL DEFAULT 'single',
     fare_class             VARCHAR(20)    NOT NULL,
     coach                  VARCHAR(5)     NOT NULL,
@@ -207,13 +211,13 @@ CREATE TABLE IF NOT EXISTS bookings (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS metro_travel_history (
-    id                     BIGSERIAL      PRIMARY KEY,
+    id                     BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     trip_id                VARCHAR(20)    NOT NULL UNIQUE,
-    user_id                VARCHAR(10)    NOT NULL REFERENCES users(user_id),
-    schedule_id            VARCHAR(20)    NOT NULL REFERENCES metro_schedules(schedule_id),
-    origin_station_id      VARCHAR(10)    NOT NULL,
-    destination_station_id VARCHAR(10)    NOT NULL,
-    travel_date            DATE           NOT NULL,
+    user_id                VARCHAR(10)    NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
+    schedule_id            VARCHAR(20)    NOT NULL REFERENCES metro_schedules(schedule_id) ON DELETE RESTRICT,
+    origin_station_id      VARCHAR(10)    NOT NULL REFERENCES metro_stations(station_id) ON DELETE RESTRICT,
+    destination_station_id VARCHAR(10)    NOT NULL REFERENCES metro_stations(station_id) ON DELETE RESTRICT,
+    travel_date            TIMESTAMPTZ    NOT NULL,
     ticket_type            VARCHAR(20)    NOT NULL DEFAULT 'single',
     day_pass_ref           VARCHAR(20),
     stops_travelled        INTEGER,
@@ -231,9 +235,9 @@ CREATE TABLE IF NOT EXISTS metro_travel_history (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS payments (
-    id         BIGSERIAL      PRIMARY KEY,
+    id         BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     payment_id VARCHAR(20)    NOT NULL UNIQUE,
-    booking_id VARCHAR(20)    NOT NULL,
+    booking_id VARCHAR(20)    NOT NULL REFERENCES bookings(booking_id) ON DELETE RESTRICT,
     amount_usd DECIMAL(10,2)  NOT NULL,
     method     VARCHAR(20)    NOT NULL,
     status     VARCHAR(20)    NOT NULL DEFAULT 'paid',
@@ -248,10 +252,10 @@ CREATE TABLE IF NOT EXISTS payments (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS feedbacks (
-    id           BIGSERIAL    PRIMARY KEY,
+    id           BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     feedback_id  VARCHAR(20)  NOT NULL UNIQUE,
-    booking_id   VARCHAR(20)  NOT NULL,
-    user_id      VARCHAR(10)  NOT NULL REFERENCES users(user_id),
+    booking_id   VARCHAR(20)  NOT NULL REFERENCES bookings(booking_id) ON DELETE RESTRICT,
+    user_id      VARCHAR(10)  NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
     rating       INTEGER      NOT NULL CHECK (rating >= 1 AND rating <= 5),
     comment      TEXT,
     submitted_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
@@ -265,7 +269,7 @@ CREATE TABLE IF NOT EXISTS feedbacks (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS ticket_types (
-    id           BIGSERIAL    PRIMARY KEY,
+    id           BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     ticket_type  VARCHAR(20)  NOT NULL UNIQUE,
     display_name VARCHAR(50)  NOT NULL,
     description  TEXT         NOT NULL,
@@ -280,7 +284,7 @@ CREATE TABLE IF NOT EXISTS ticket_types (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS refund_policies (
-    id           BIGSERIAL    PRIMARY KEY,
+    id           BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     policy_id    VARCHAR(20)  NOT NULL UNIQUE,
     label        VARCHAR(200) NOT NULL,
     network_type VARCHAR(20)  NOT NULL,
@@ -292,8 +296,8 @@ CREATE TABLE IF NOT EXISTS refund_policies (
 );
 
 CREATE TABLE IF NOT EXISTS refund_policy_windows (
-    id                         BIGSERIAL      PRIMARY KEY,
-    policy_id                  VARCHAR(20)    NOT NULL REFERENCES refund_policies(policy_id),
+    id                         BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    policy_id                  VARCHAR(20)    NOT NULL REFERENCES refund_policies(policy_id) ON DELETE RESTRICT,
     window_id                  VARCHAR(20)    NOT NULL UNIQUE,
     label                      VARCHAR(100)   NOT NULL,
     condition_text             TEXT           NOT NULL,
@@ -342,7 +346,7 @@ CREATE INDEX IF NOT EXISTS idx_seats_schedule_class
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS policy_documents (
-    id          SERIAL       PRIMARY KEY,
+    id          SERIAL       PRIMARY KEY, -- SERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     title       VARCHAR(200) NOT NULL,
     category    VARCHAR(50)  NOT NULL,
     content     TEXT         NOT NULL,

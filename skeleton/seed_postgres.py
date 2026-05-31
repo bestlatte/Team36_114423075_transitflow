@@ -12,6 +12,7 @@ Safe to re-run: implement your inserts with ON CONFLICT DO NOTHING.
 import json
 import os
 import sys
+from datetime import datetime, timezone
 
 import bcrypt
 import psycopg2
@@ -55,6 +56,30 @@ def insert_many(cur, table, columns, rows):
 
 def _hash_password(plain: str) -> str:
     return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _service_time_at_utc(time_text: str) -> datetime:
+    """Represent schedule-only times as UTC timestamps on a fixed service date."""
+    parsed = datetime.strptime(time_text, "%H:%M").time()
+    return datetime(2000, 1, 1, parsed.hour, parsed.minute, tzinfo=timezone.utc)
+
+
+def _date_at_utc(date_text: str) -> datetime:
+    parsed = datetime.strptime(date_text, "%Y-%m-%d")
+    return parsed.replace(tzinfo=timezone.utc)
+
+
+def _combine_date_time_at_utc(date_text: str, time_text: str) -> datetime:
+    parsed_date = datetime.strptime(date_text, "%Y-%m-%d")
+    parsed_time = datetime.strptime(time_text, "%H:%M").time()
+    return datetime(
+        parsed_date.year,
+        parsed_date.month,
+        parsed_date.day,
+        parsed_time.hour,
+        parsed_time.minute,
+        tzinfo=timezone.utc,
+    )
 
 
 # ── seeders ──────────────────────────────────────────────────────────────────
@@ -119,7 +144,8 @@ def seed_metro_schedules(cur):
         (
             d["schedule_id"], d["line"], d["direction"],
             d["origin_station_id"], d["destination_station_id"],
-            d["first_train_time"], d["last_train_time"],
+            _service_time_at_utc(d["first_train_time"]),
+            _service_time_at_utc(d["last_train_time"]),
             d["base_fare_usd"], d["per_stop_rate_usd"],
             d["frequency_min"], d.get("operates_on", []),
         )
@@ -145,15 +171,15 @@ def seed_national_rail_schedules(cur):
         "schedule_id", "line", "service_type", "direction",
         "origin_station_id", "destination_station_id",
         "first_train_time", "last_train_time",
-        "frequency_min", "operates_on", "passed_through_stations",
+        "frequency_min", "operates_on",
     ]
     sched_rows = [
         (
             d["schedule_id"], d["line"], d["service_type"], d["direction"],
             d["origin_station_id"], d["destination_station_id"],
-            d["first_train_time"], d["last_train_time"],
+            _service_time_at_utc(d["first_train_time"]),
+            _service_time_at_utc(d["last_train_time"]),
             d["frequency_min"], d.get("operates_on", []),
-            d.get("passed_through_stations", []),
         )
         for d in data
     ]
@@ -217,7 +243,8 @@ def seed_users(cur):
 
         user_rows.append((
             d["user_id"], first_name, surname, d["full_name"],
-            d["email"], d.get("phone"), d.get("date_of_birth"),
+            d["email"], d.get("phone"),
+            _date_at_utc(d["date_of_birth"]) if d.get("date_of_birth") else None,
             d.get("is_active", True), d["registered_at"],
         ))
 
@@ -248,7 +275,9 @@ def seed_national_rail_bookings(cur):
         (
             d["booking_id"], d["user_id"], d["schedule_id"],
             d["origin_station_id"], d["destination_station_id"],
-            d["travel_date"], d["departure_time"], d["ticket_type"], d["fare_class"],
+            _date_at_utc(d["travel_date"]),
+            _combine_date_time_at_utc(d["travel_date"], d["departure_time"]),
+            d["ticket_type"], d["fare_class"],
             d["coach"], d["seat_id"], d["stops_travelled"], d["amount_usd"],
             d["status"], d["booked_at"], d.get("travelled_at"),
         )
@@ -271,7 +300,7 @@ def seed_metro_travels(cur):
         (
             d["trip_id"], d["user_id"], d["schedule_id"],
             d["origin_station_id"], d["destination_station_id"],
-            d["travel_date"], d["ticket_type"], d.get("day_pass_ref"),
+            _date_at_utc(d["travel_date"]), d["ticket_type"], d.get("day_pass_ref"),
             d.get("stops_travelled"), d["amount_usd"], d["status"],
             d.get("purchased_at"), d.get("travelled_at"),
         )
