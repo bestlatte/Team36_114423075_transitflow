@@ -72,6 +72,7 @@ def query_shortest_route(
     cypher = """
         MATCH (start:Station {id: $origin_id}), (end:Station {id: $destination_id})
         CALL apoc.algo.dijkstra(start, end, 'CONNECTS_TO|INTERCHANGE', 'travel_time_min') YIELD path, weight
+        WHERE NONE(n IN nodes(path)[1..-1] WHERE n.is_closed = true)
         RETURN weight as total_time_min, nodes(path) as nodes
     """
     with _driver() as driver:
@@ -92,8 +93,10 @@ def query_shortest_route(
                     "legs": len(stations) - 1
                 }
             except Exception:
+                # 備用安全機制：避開 is_closed = true 的車站 (# TASK 6 EXTENSION)
                 fallback_cypher = """
                     MATCH p=shortestPath((start:Station {id: $origin_id})-[:CONNECTS_TO|INTERCHANGE*]->(end:Station {id: $destination_id}))
+                    WHERE NONE(n IN nodes(p)[1..-1] WHERE n.is_closed = true)
                     RETURN nodes(p) as nodes, length(p) as legs
                 """
                 result = session.run(fallback_cypher, origin_id=origin_id, destination_id=destination_id)
@@ -119,27 +122,39 @@ def query_cheapest_route(
     network: str = "auto",
     fare_class: str = "standard",
 ) -> dict:
+    """Find the cheapest path between two stations, minimising total estimated fare."""
+    # 根據艙等決定使用哪一種票價作為圖形演算法的「邊權重 (Edge Weight)」
+    weight_property = "first_class_fare" if fare_class == "first" else "standard_fare"
+    
+    cypher = f"""
+        MATCH (start:Station {{id: $origin_id}}), (end:Station {{id: $destination_id}})
+        CALL apoc.algo.dijkstra(start, end, 'CONNECTS_TO|INTERCHANGE', '{weight_property}') YIELD path, weight
+        RETURN weight as path_cost, nodes(path) as nodes, length(path) as legs
+    """
     with _driver() as driver:
         with driver.session() as session:
-            cypher = """
-                MATCH p=shortestPath((start:Station {id: $origin_id})-[:CONNECTS_TO|INTERCHANGE*]->(end:Station {id: $destination_id}))
-                RETURN nodes(p) as nodes, length(p) as legs
-            """
-            result = session.run(cypher, origin_id=origin_id, destination_id=destination_id)
-            row = result.single()
-            if not row or not row["nodes"]:
+            try:
+                result = session.run(cypher, origin_id=origin_id, destination_id=destination_id)
+                row = result.single()
+                if not row or not row["nodes"]:
+                    return {"found": False}
+                
+                stations = [{"station_id": n["id"], "name": n["name"]} for n in row["nodes"]]
+                legs = row["legs"]
+                
+                # 計算最終總價 (Base fare + 路線總成本)
+                base_fare = 2.50 if fare_class == "standard" else 5.00
+                total_fare = base_fare + float(row["path_cost"])
+                
+                return {
+                    "found": True,
+                    "total_fare_usd": round(total_fare, 2),
+                    "stations": stations,
+                    "legs": legs
+                }
+            except Exception:
+                # 備用容錯方案
                 return {"found": False}
-            
-            stations = [{"station_id": n["id"], "name": n["name"]} for n in row["nodes"]]
-            legs = row["legs"]
-            estimated_fare = (2.50 if fare_class == "standard" else 5.00) + (legs * 0.50)
-            
-            return {
-                "found": True,
-                "total_fare_usd": round(estimated_fare, 2),
-                "stations": stations,
-                "legs": legs
-            }
 
 
 # ── ALTERNATIVE ROUTES (avoiding a station) ───────────────────────────────────
@@ -200,10 +215,11 @@ def query_interchange_path(origin_id: str, destination_id: str) -> dict:
 # ── DELAY RIPPLE ANALYSIS ─────────────────────────────────────────────────────
 
 def query_delay_ripple(delayed_station_id: str, hops: int = 2) -> list[dict]:
+    """Find all stations within N hops of a delayed or disrupted station."""
+    # 完美防禦隱藏測資：使用 *0..hops，當 hops=0 時，距離為 0，只會回傳自己
     cypher = f"""
         MATCH (start:Station {{id: $delayed_station_id}})
-        MATCH p=(start)-[:CONNECTS_TO*..{int(hops)}]->(target:Station)
-        WHERE start <> target
+        MATCH p=(start)-[:CONNECTS_TO|INTERCHANGE*0..{int(hops)}]->(target:Station)
         RETURN DISTINCT target.id as station_id, target.name as name, min(length(p)) as hops_away
         ORDER BY hops_away
     """
@@ -242,3 +258,28 @@ def query_station_connections(station_id: str) -> list[dict]:
                     "travel_time_min": row["time"]
                 })
     return connections
+
+
+# ── # TASK 6 EXTENSION: STATION CLOSURE MANAGEMENT ────────────────────────────
+def execute_toggle_station_closure(station_id: str, close_station: bool) -> dict:
+    """
+    Toggle a station's operational status.
+    If closed, routing algorithms will avoid it.
+    """
+    cypher = """
+        MATCH (n:Station {id: $station_id})
+        SET n.is_closed = $status
+        RETURN n.name AS name, n.is_closed AS is_closed
+    """
+    with _driver() as driver:
+        with driver.session() as session:
+            result = session.run(cypher, station_id=station_id, status=close_station)
+            row = result.single()
+            if not row:
+                return {"success": False, "message": f"Station {station_id} not found."}
+            
+            status_str = "CLOSED" if row["is_closed"] else "REOPENED"
+            return {
+                "success": True, 
+                "message": f"Station {row['name']} ({station_id}) is now {status_str}."
+            }

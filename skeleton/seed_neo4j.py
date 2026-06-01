@@ -44,22 +44,20 @@ def seed():
         # 我們給它兩個標籤: :Station 和 :Metro，方便未來查詢
         for s in metro_stations:
             session.run("""
-                CREATE (n:Station:Metro {
-                    id: $id, 
-                    name: $name, 
-                    is_interchange_rail: $is_interchange
-                })
+                MERGE (n:Station:Metro {id: $id})
+                SET n.name = $name,
+                    n.is_interchange_rail = $is_interchange,
+                    n.is_closed = false
             """, id=s["station_id"], name=s["name"], is_interchange=s["is_interchange_national_rail"])
         print("  Created Metro nodes")
 
         # 2. 建立英國鐵路車站節點 (Nodes)
         for s in rail_stations:
             session.run("""
-                CREATE (n:Station:NationalRail {
-                    id: $id, 
-                    name: $name,
-                    is_interchange_metro: $is_interchange
-                })
+                MERGE (n:Station:NationalRail {id: $id})
+                SET n.name = $name,
+                    n.is_interchange_metro = $is_interchange,
+                    n.is_closed = false
             """, id=s["station_id"], name=s["name"], is_interchange=s.get("is_interchange_metro", False))
         print("  Created National Rail nodes")
 
@@ -70,7 +68,9 @@ def seed():
                     MATCH (a:Station {id: $origin_id})
                     MATCH (b:Station {id: $dest_id})
                     MERGE (a)-[r:CONNECTS_TO {line: $line}]->(b)
-                    SET r.travel_time_min = $time
+                    SET r.travel_time_min = $time,
+                        r.standard_fare = 0.5,
+                        r.first_class_fare = 0.5
                 """, origin_id=s["station_id"], dest_id=adj["station_id"], 
                      line=adj["line"], time=adj["travel_time_min"])
         print("  Created Metro links")
@@ -82,7 +82,9 @@ def seed():
                     MATCH (a:Station {id: $origin_id})
                     MATCH (b:Station {id: $dest_id})
                     MERGE (a)-[r:CONNECTS_TO {line: $line}]->(b)
-                    SET r.travel_time_min = $time
+                    SET r.travel_time_min = $time,
+                        r.standard_fare = 1.0,
+                        r.first_class_fare = 2.0
                 """, origin_id=s["station_id"], dest_id=adj["station_id"], 
                      line=adj["line"], time=adj["travel_time_min"])
         print("  Created National Rail links")
