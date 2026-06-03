@@ -370,5 +370,21 @@ CREATE TABLE IF NOT EXISTS policy_documents (
     created_at  TIMESTAMPTZ  DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_policy_documents_embedding
+CREATE INDEX IF NOT EXISTS policy_documents_hnsw idx_policy_documents_embedding
     ON policy_documents USING hnsw (embedding vector_cosine_ops);
+
+-- ============================================================
+-- # TASK 6 EXTENSION: Station Closures Log (即時車站封閉紀錄)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS station_closures (
+    id SERIAL PRIMARY KEY,
+    station_id VARCHAR(10) NOT NULL,
+    reason TEXT NOT NULL,
+    closed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    reopened_at TIMESTAMPTZ,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE INDEX IF NOT EXISTS idx_station_closures_active 
+    ON station_closures(is_active);
