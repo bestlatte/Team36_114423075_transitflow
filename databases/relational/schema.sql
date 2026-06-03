@@ -143,6 +143,17 @@ CREATE TABLE IF NOT EXISTS seats (
     UNIQUE (schedule_id, seat_id)
 );
 
+CREATE OR REPLACE VIEW seat_layouts AS
+SELECT
+    schedule_id,
+    coach,
+    fare_class,
+    seat_id,
+    seat_row,
+    seat_column
+FROM seats
+WHERE is_deleted = FALSE;
+
 -- ============================================================
 --  USERS (profile only — passwords are NOT stored here)
 -- ============================================================
@@ -319,6 +330,10 @@ CREATE INDEX IF NOT EXISTS idx_bookings_user_id
 
 CREATE INDEX IF NOT EXISTS idx_bookings_schedule_date
     ON bookings(schedule_id, travel_date);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_bookings_active_seat_date
+    ON bookings(schedule_id, travel_date, seat_id)
+    WHERE status != 'cancelled' AND is_deleted = FALSE;
 
 CREATE INDEX IF NOT EXISTS idx_bookings_status
     ON bookings(status);

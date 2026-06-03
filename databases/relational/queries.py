@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import random
 import string
+from contextlib import contextmanager
 from datetime import datetime, time, timezone
 from typing import Optional
 
@@ -30,11 +31,15 @@ import psycopg2.extras
 from skeleton.config import PG_DSN, VECTOR_TOP_K, VECTOR_SIMILARITY_THRESHOLD
 
 
+@contextmanager
 def _connect():
-    """Return a new psycopg2 connection with autocommit enabled."""
+    """Yield a new psycopg2 connection with autocommit enabled, then close it."""
     conn = psycopg2.connect(PG_DSN)
     conn.autocommit = True
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def _tx_connect():
@@ -52,6 +57,11 @@ def _gen_booking_id() -> str:
 def _gen_payment_id() -> str:
     suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
     return f"PM-{suffix}"
+
+
+def _fail_transaction(conn, message: str) -> tuple[bool, str]:
+    conn.rollback()
+    return False, message
 
 
 def _hash_password(plain: str) -> str:
@@ -95,6 +105,10 @@ def _date_text(value) -> str:
     return str(value)
 
 
+def _weekday_code(date_text: str) -> str:
+    return _date_at_utc(date_text).strftime("%a").lower()
+
+
 # ── NATIONAL RAIL AVAILABILITY ────────────────────────────────────────────────
 
 def query_national_rail_availability(
@@ -102,30 +116,11 @@ def query_national_rail_availability(
     destination_id: str,
     travel_date: Optional[str] = None,
 ) -> list[dict]:
-    """
-    Return national rail schedules that serve both origin and destination stations
-    in the correct order, along with seat occupancy for the requested travel date.
-    """
+    """Return schedules that serve both stations in the correct direction."""
     sql = """
         SELECT
             nrs.schedule_id,
-            nrs.line,
-            nrs.service_type,
-            nrs.direction,
-            nrs.origin_station_id   AS sched_origin,
-            nrs.destination_station_id AS sched_destination,
-            nrs.first_train_time,
-            nrs.last_train_time,
-            nrs.frequency_min,
-            nrs.operates_on,
-            o_stop.stop_order       AS origin_stop_order,
-            d_stop.stop_order       AS dest_stop_order,
-            o_stop.travel_time_from_origin_min AS origin_travel_min,
-            d_stop.travel_time_from_origin_min AS dest_travel_min,
-            (d_stop.stop_order - o_stop.stop_order) AS stops_travelled,
-            (d_stop.travel_time_from_origin_min - o_stop.travel_time_from_origin_min) AS journey_time_min,
-            origin_st.name          AS origin_name,
-            dest_st.name            AS destination_name
+            COUNT(s.seat_id) - COUNT(b.booking_id) AS available_seats
         FROM national_rail_schedules nrs
         JOIN national_rail_schedule_stops o_stop
             ON o_stop.schedule_id = nrs.schedule_id
@@ -141,59 +136,44 @@ def query_national_rail_availability(
         JOIN national_rail_stations dest_st
             ON dest_st.station_id = %s
             AND dest_st.is_deleted = FALSE
+        LEFT JOIN seats s
+            ON s.schedule_id = nrs.schedule_id
+            AND s.is_deleted = FALSE
+        LEFT JOIN bookings b
+            ON b.schedule_id = nrs.schedule_id
+            AND b.seat_id = s.seat_id
+            AND b.status != 'cancelled'
+            AND b.is_deleted = FALSE
+            AND (%s::date IS NOT NULL AND b.travel_date::date = %s::date)
         WHERE o_stop.stop_order < d_stop.stop_order
             AND nrs.is_deleted = FALSE
+            AND (%s IS NULL OR %s = ANY(nrs.operates_on))
+        GROUP BY nrs.schedule_id
         ORDER BY nrs.schedule_id
     """
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(sql, (origin_id, destination_id, origin_id, destination_id))
-            schedules = [dict(row) for row in cur.fetchall()]
-
-            for sched in schedules:
-                sched["first_train_time"] = _time_text(sched["first_train_time"])
-                sched["last_train_time"] = _time_text(sched["last_train_time"])
-
-                cur.execute("""
-                    SELECT fare_class, base_fare_usd, per_stop_rate_usd
-                    FROM national_rail_fare_classes
-                    WHERE schedule_id = %s AND is_deleted = FALSE
-                """, (sched["schedule_id"],))
-                fares = {}
-                for fc_row in cur.fetchall():
-                    fc = dict(fc_row)
-                    stops = sched["stops_travelled"]
-                    total = float(fc["base_fare_usd"]) + stops * float(fc["per_stop_rate_usd"])
-                    fares[fc["fare_class"]] = {
-                        "base_fare_usd": float(fc["base_fare_usd"]),
-                        "per_stop_rate_usd": float(fc["per_stop_rate_usd"]),
-                        "total_fare_usd": round(total, 2),
-                    }
-                sched["fare_classes"] = fares
-
-                if travel_date:
-                    cur.execute("""
-                        SELECT COUNT(*) AS booked
-                        FROM bookings
-                        WHERE schedule_id = %s
-                            AND travel_date::date = %s::date
-                            AND status != 'cancelled'
-                            AND is_deleted = FALSE
-                    """, (sched["schedule_id"], travel_date))
-                    booked = dict(cur.fetchone())["booked"]
-
-                    cur.execute("""
-                        SELECT COUNT(*) AS total
-                        FROM seats
-                        WHERE schedule_id = %s AND is_deleted = FALSE
-                    """, (sched["schedule_id"],))
-                    total_seats = dict(cur.fetchone())["total"]
-
-                    sched["total_seats"] = total_seats
-                    sched["booked_seats"] = booked
-                    sched["available_seats"] = total_seats - booked
-
-            return schedules
+            weekday = _weekday_code(travel_date) if travel_date else None
+            cur.execute(
+                sql,
+                (
+                    origin_id,
+                    destination_id,
+                    origin_id,
+                    destination_id,
+                    travel_date,
+                    travel_date,
+                    weekday,
+                    weekday,
+                ),
+            )
+            return [
+                {
+                    "schedule_id": row["schedule_id"],
+                    "available_seats": int(row["available_seats"]),
+                }
+                for row in cur.fetchall()
+            ]
 
 
 def query_national_rail_fare(
@@ -376,8 +356,7 @@ def auto_select_adjacent_seats(available_seats: list[dict], count: int) -> list[
 def query_user_profile(user_email: str) -> Optional[dict]:
     """Return a user's profile by email."""
     sql = """
-        SELECT user_id, email, full_name, first_name, surname,
-               phone, date_of_birth, is_active
+        SELECT user_id, email, full_name, first_name, surname, phone, date_of_birth, is_active
         FROM users
         WHERE email = %s AND is_deleted = FALSE
     """
@@ -388,9 +367,19 @@ def query_user_profile(user_email: str) -> Optional[dict]:
             if not row:
                 return None
             d = dict(row)
-            if d.get("date_of_birth"):
-                d["date_of_birth"] = _date_text(d["date_of_birth"])
-            return d
+            dob = d.get("date_of_birth")
+            return {
+                "user_id": d["user_id"],
+                "email": d["email"],
+                "full_name": d["full_name"],
+                "name": d["full_name"],
+                "first_name": d.get("first_name"),
+                "surname": d.get("surname"),
+                "phone": d.get("phone"),
+                "date_of_birth": _date_text(dob) if dob else None,
+                "year_of_birth": dob.year if dob else None,
+                "is_active": d.get("is_active"),
+            }
 
 
 def query_user_bookings(user_email: str) -> dict:
@@ -508,7 +497,7 @@ def execute_booking(
                 (user_id,),
             )
             if not cur.fetchone():
-                return False, "User not found."
+                return _fail_transaction(conn, "User not found.")
 
             cur.execute("""
                 SELECT o.stop_order AS o_order, d.stop_order AS d_order
@@ -521,9 +510,15 @@ def execute_booking(
             """, (schedule_id, origin_station_id, destination_station_id))
             stop_row = cur.fetchone()
             if not stop_row:
-                return False, "Schedule does not serve both origin and destination stations."
+                return _fail_transaction(
+                    conn,
+                    "Schedule does not serve both origin and destination stations.",
+                )
             if stop_row["o_order"] >= stop_row["d_order"]:
-                return False, "Origin must come before destination on this schedule."
+                return _fail_transaction(
+                    conn,
+                    "Origin must come before destination on this schedule.",
+                )
             stops_travelled = stop_row["d_order"] - stop_row["o_order"]
 
             cur.execute("""
@@ -533,7 +528,10 @@ def execute_booking(
             """, (schedule_id, fare_class))
             fare_row = cur.fetchone()
             if not fare_row:
-                return False, f"Fare class '{fare_class}' not found for schedule {schedule_id}."
+                return _fail_transaction(
+                    conn,
+                    f"Fare class '{fare_class}' not found for schedule {schedule_id}.",
+                )
             amount = float(fare_row["base_fare_usd"]) + stops_travelled * float(fare_row["per_stop_rate_usd"])
             amount = round(amount, 2)
 
@@ -541,17 +539,24 @@ def execute_booking(
                 available = query_available_seats(schedule_id, travel_date, fare_class)
                 selected = auto_select_adjacent_seats(available, 1)
                 if not selected:
-                    return False, "No seats available for this schedule, date, and fare class."
+                    return _fail_transaction(
+                        conn,
+                        "No seats available for this schedule, date, and fare class.",
+                    )
                 seat_id = selected[0]
             else:
                 cur.execute("""
                     SELECT seat_id, coach FROM seats
                     WHERE schedule_id = %s AND seat_id = %s
                         AND fare_class = %s AND is_deleted = FALSE
+                    FOR UPDATE
                 """, (schedule_id, seat_id, fare_class))
                 seat_row = cur.fetchone()
                 if not seat_row:
-                    return False, f"Seat {seat_id} not found for this schedule and fare class."
+                    return _fail_transaction(
+                        conn,
+                        f"Seat {seat_id} not found for this schedule and fare class.",
+                    )
 
                 cur.execute("""
                     SELECT booking_id FROM bookings
@@ -560,14 +565,36 @@ def execute_booking(
                         AND travel_date::date = %s::date
                 """, (schedule_id, seat_id, travel_date))
                 if cur.fetchone():
-                    return False, f"Seat {seat_id} is already booked for {travel_date}."
+                    return _fail_transaction(
+                        conn,
+                        f"Seat {seat_id} is already booked for {travel_date}.",
+                    )
 
             cur.execute("""
                 SELECT coach FROM seats
-                WHERE schedule_id = %s AND seat_id = %s AND is_deleted = FALSE
-            """, (schedule_id, seat_id))
+                WHERE schedule_id = %s AND seat_id = %s
+                    AND fare_class = %s AND is_deleted = FALSE
+                FOR UPDATE
+            """, (schedule_id, seat_id, fare_class))
             coach_row = cur.fetchone()
-            coach = coach_row["coach"] if coach_row else fare_class[0].upper()
+            if not coach_row:
+                return _fail_transaction(
+                    conn,
+                    f"Seat {seat_id} not found for this schedule and fare class.",
+                )
+            coach = coach_row["coach"]
+
+            cur.execute("""
+                SELECT booking_id FROM bookings
+                WHERE schedule_id = %s AND seat_id = %s
+                    AND status != 'cancelled' AND is_deleted = FALSE
+                    AND travel_date::date = %s::date
+            """, (schedule_id, seat_id, travel_date))
+            if cur.fetchone():
+                return _fail_transaction(
+                    conn,
+                    f"Seat {seat_id} is already booked for {travel_date}.",
+                )
 
             cur.execute("""
                 SELECT first_train_time FROM national_rail_schedules
@@ -647,18 +674,19 @@ def execute_cancellation(booking_id: str, user_id: str) -> tuple[bool, dict | st
                        departure_time, amount_usd, status, fare_class
                 FROM bookings
                 WHERE booking_id = %s AND is_deleted = FALSE
+                FOR UPDATE
             """, (booking_id,))
             bk = cur.fetchone()
             if not bk:
-                return False, "Booking not found."
+                return _fail_transaction(conn, "Booking not found.")
             bk = dict(bk)
 
             if bk["user_id"] != user_id:
-                return False, "You do not own this booking."
+                return _fail_transaction(conn, "You do not own this booking.")
             if bk["status"] == "cancelled":
-                return False, "Booking is already cancelled."
+                return _fail_transaction(conn, "Booking is already cancelled.")
             if bk["status"] == "completed":
-                return False, "Cannot cancel a completed booking."
+                return _fail_transaction(conn, "Cannot cancel a completed booking.")
 
             cur.execute("""
                 SELECT service_type FROM national_rail_schedules
@@ -666,7 +694,7 @@ def execute_cancellation(booking_id: str, user_id: str) -> tuple[bool, dict | st
             """, (bk["schedule_id"],))
             sched = cur.fetchone()
             if not sched:
-                return False, "Schedule not found."
+                return _fail_transaction(conn, "Schedule not found.")
             service_type = sched["service_type"]
 
             policy_id = "RF001" if service_type == "normal" else "RF002"
@@ -736,6 +764,7 @@ def execute_cancellation(booking_id: str, user_id: str) -> tuple[bool, dict | st
             "original_amount_usd": original_amount,
             "refund_percent": refund_percent,
             "admin_fee_usd": admin_fee,
+            "refund_amount": refund_amount,
             "refund_amount_usd": refund_amount,
         }
     except Exception as e:
