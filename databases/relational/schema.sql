@@ -248,7 +248,7 @@ CREATE TABLE IF NOT EXISTS metro_travel_history (
 CREATE TABLE IF NOT EXISTS payments (
     id         BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     payment_id VARCHAR(20)    NOT NULL UNIQUE,
-    booking_id VARCHAR(20)    NOT NULL REFERENCES bookings(booking_id) ON DELETE RESTRICT,
+    booking_id VARCHAR(20)    NOT NULL,
     amount_usd DECIMAL(10,2)  NOT NULL,
     method     VARCHAR(20)    NOT NULL,
     status     VARCHAR(20)    NOT NULL DEFAULT 'paid',
@@ -265,7 +265,7 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE TABLE IF NOT EXISTS feedbacks (
     id           BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     feedback_id  VARCHAR(20)  NOT NULL UNIQUE,
-    booking_id   VARCHAR(20)  NOT NULL REFERENCES bookings(booking_id) ON DELETE RESTRICT,
+    booking_id   VARCHAR(20)  NOT NULL,
     user_id      VARCHAR(10)  NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
     rating       INTEGER      NOT NULL CHECK (rating >= 1 AND rating <= 5),
     comment      TEXT,
@@ -370,7 +370,7 @@ CREATE TABLE IF NOT EXISTS policy_documents (
     created_at  TIMESTAMPTZ  DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS policy_documents_hnsw idx_policy_documents_embedding
+CREATE INDEX IF NOT EXISTS idx_policy_documents_embedding
     ON policy_documents USING hnsw (embedding vector_cosine_ops);
 
 -- ============================================================
