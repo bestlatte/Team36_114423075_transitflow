@@ -97,6 +97,12 @@ def _inject_station_ids(text: str) -> str:
     return result
 
 
+def _extract_iso_date(text: str) -> Optional[str]:
+    """Return the first YYYY-MM-DD date mentioned in text, if any."""
+    match = re.search(r'\b\d{4}-\d{2}-\d{2}\b', text)
+    return match.group(0) if match else None
+
+
 # ── System prompt ─────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """You are TransitFlow, a transit assistant for a dual-network system.
@@ -640,6 +646,7 @@ JSON:"""
     _lower = _augmented_message.lower()
     _station_ids = re.findall(r'\b(MS\d{2}|NR\d{2})\b', _augmented_message, re.IGNORECASE)
     _two_stations = len(_station_ids) >= 2
+    _mentioned_date = _extract_iso_date(_augmented_message)
 
     def _tool_selected(name: str, *required_params) -> bool:
         """Return True only if tool `name` is in tool_calls with all required params set."""
@@ -675,12 +682,9 @@ JSON:"""
                            "schedule", "timetable", "available", "availability"}
         if any(kw in _lower for kw in _avail_triggers):
             o, d = _station_ids[0].upper(), _station_ids[1].upper()
-            _travel_date = next(
-                (w for w in _lower.split() if re.match(r'\d{4}-\d{2}-\d{2}', w)), None
-            )
             _params = {"origin_id": o, "destination_id": d}
-            if _travel_date:
-                _params["travel_date"] = _travel_date
+            if _mentioned_date:
+                _params["travel_date"] = _mentioned_date
             _tool = "check_national_rail_availability" if o.startswith("NR") else "check_metro_availability"
             _fallback(_tool, _params, "availability query")
 
@@ -691,6 +695,23 @@ JSON:"""
                                "list booking", "show my", "view my"}
         if any(kw in _lower for kw in _personal_triggers):
             _fallback("get_user_bookings", {}, "personal booking query")
+
+    # 4. Deterministic parameter repair for selected tools.
+    # Native tool calling can omit optional fields such as travel_date even when
+    # the user explicitly typed a date; preserve the chosen tool and add it.
+    for call in tool_calls:
+        name = call.get("name")
+        params = call.setdefault("params", call.get("parameters") or {})
+        if (
+            _mentioned_date
+            and name == "check_national_rail_availability"
+            and not params.get("travel_date")
+        ):
+            params["travel_date"] = _mentioned_date
+            if debug:
+                debug_info.append(
+                    f"**Param repair:** added travel_date={_mentioned_date} to {name}"
+                )
 
     # Step 2: Execute each tool call against the real databases
     tool_results = []
