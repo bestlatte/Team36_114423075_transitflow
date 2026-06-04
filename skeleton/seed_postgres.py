@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 import bcrypt
 import psycopg2
+from psycopg2 import sql
 from psycopg2.extras import execute_values
 
 # ── resolve paths ────────────────────────────────────────────────────────────
@@ -54,8 +55,27 @@ def insert_many(cur, table, columns, rows):
     return cur.rowcount
 
 
+def upsert_many(cur, table, columns, rows, conflict_columns):
+    """Bulk insert/update so reseeding refreshes mock data changes."""
+    if not rows:
+        return 0
+    update_columns = [c for c in columns if c not in conflict_columns]
+    assignments = ", ".join(f"{c} = EXCLUDED.{c}" for c in update_columns)
+    sql = (
+        f"INSERT INTO {table} ({', '.join(columns)}) VALUES %s "
+        f"ON CONFLICT ({', '.join(conflict_columns)}) DO UPDATE SET {assignments}, "
+        f"updated_at = NOW(), is_deleted = FALSE"
+    )
+    execute_values(cur, sql, rows)
+    return cur.rowcount
+
+
 def _hash_password(plain: str) -> str:
     return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _normalize_secret_answer(answer: str) -> str:
+    return answer.strip().lower()
 
 
 def _service_time_at_utc(time_text: str) -> datetime:
@@ -183,7 +203,13 @@ def seed_national_rail_schedules(cur):
         )
         for d in data
     ]
-    n = insert_many(cur, "national_rail_schedules", sched_cols, sched_rows)
+    n = upsert_many(
+        cur,
+        "national_rail_schedules",
+        sched_cols,
+        sched_rows,
+        ["schedule_id"],
+    )
     print(f"  national_rail_schedules: {n} rows")
 
     stop_cols = ["schedule_id", "station_id", "stop_order", "travel_time_from_origin_min"]
@@ -192,7 +218,13 @@ def seed_national_rail_schedules(cur):
         times = d["travel_time_from_origin_min"]
         for order, sid in enumerate(d["stops_in_order"], start=1):
             stop_rows.append((d["schedule_id"], sid, order, times[sid]))
-    n = insert_many(cur, "national_rail_schedule_stops", stop_cols, stop_rows)
+    n = upsert_many(
+        cur,
+        "national_rail_schedule_stops",
+        stop_cols,
+        stop_rows,
+        ["schedule_id", "stop_order"],
+    )
     print(f"  national_rail_schedule_stops: {n} rows")
 
     fare_cols = ["schedule_id", "fare_class", "base_fare_usd", "per_stop_rate_usd"]
@@ -203,15 +235,32 @@ def seed_national_rail_schedules(cur):
                 d["schedule_id"], fc,
                 rates["base_fare_usd"], rates["per_stop_rate_usd"],
             ))
-    n = insert_many(cur, "national_rail_fare_classes", fare_cols, fare_rows)
+    n = upsert_many(
+        cur,
+        "national_rail_fare_classes",
+        fare_cols,
+        fare_rows,
+        ["schedule_id", "fare_class"],
+    )
     print(f"  national_rail_fare_classes: {n} rows")
 
 
 def seed_seat_layouts(cur):
     data = load("national_rail_seat_layouts.json")
+    schedules = load("national_rail_schedules.json")
     cols = ["schedule_id", "coach", "fare_class", "seat_id", "seat_row", "seat_column"]
     rows = []
-    for layout in data:
+
+    layouts_by_schedule = {layout["schedule_id"]: layout for layout in data}
+    default_coaches = data[0]["coaches"] if data else []
+    for schedule in schedules:
+        if schedule["schedule_id"] not in layouts_by_schedule:
+            layouts_by_schedule[schedule["schedule_id"]] = {
+                "schedule_id": schedule["schedule_id"],
+                "coaches": default_coaches,
+            }
+
+    for layout in layouts_by_schedule.values():
         sid = layout["schedule_id"]
         for coach_info in layout["coaches"]:
             coach = coach_info["coach"]
@@ -221,7 +270,7 @@ def seed_seat_layouts(cur):
                     sid, coach, fc,
                     seat["seat_id"], seat["row"], seat["column"],
                 ))
-    n = insert_many(cur, "seats", cols, rows)
+    n = upsert_many(cur, "seats", cols, rows, ["schedule_id", "seat_id"])
     print(f"  seats: {n} rows")
 
 
@@ -232,7 +281,7 @@ def seed_users(cur):
         "user_id", "first_name", "surname", "full_name",
         "email", "phone", "date_of_birth", "is_active", "registered_at",
     ]
-    cred_cols = ["user_id", "password_hash", "secret_question", "secret_answer"]
+    cred_cols = ["user_id", "password_hash", "secret_question", "secret_answer_hash"]
 
     user_rows = []
     cred_rows = []
@@ -252,7 +301,7 @@ def seed_users(cur):
             d["user_id"],
             _hash_password(d["password"]),
             d["secret_question"],
-            d["secret_answer"],
+            _hash_password(_normalize_secret_answer(d["secret_answer"])),
         ))
 
     n = insert_many(cur, "users", user_cols, user_rows)
@@ -312,11 +361,21 @@ def seed_metro_travels(cur):
 
 def seed_payments(cur):
     data = load("payments.json")
-    cols = ["payment_id", "booking_id", "amount_usd", "method", "status", "paid_at"]
-    rows = [
-        (d["payment_id"], d["booking_id"], d["amount_usd"], d["method"], d["status"], d["paid_at"])
-        for d in data
-    ]
+    cols = ["payment_id", "booking_id", "trip_id", "amount_usd", "method", "status", "paid_at"]
+    rows = []
+    for d in data:
+        transaction_id = d["booking_id"]
+        booking_id = transaction_id if transaction_id.startswith("BK") else None
+        trip_id = transaction_id if transaction_id.startswith("MT") else None
+        rows.append((
+            d["payment_id"],
+            booking_id,
+            trip_id,
+            d["amount_usd"],
+            d["method"],
+            d["status"],
+            d["paid_at"],
+        ))
     n = insert_many(cur, "payments", cols, rows)
     print(f"  payments: {n} rows")
 
@@ -393,6 +452,44 @@ def seed_refund_policies(cur):
     print(f"  refund_policy_windows: {n} rows")
 
 
+def reset_id_sequences(cur):
+    """Keep BIGSERIAL sequences aligned after conflict-heavy reseeding."""
+    tables = [
+        "metro_stations",
+        "national_rail_stations",
+        "metro_schedules",
+        "metro_schedule_stops",
+        "national_rail_schedules",
+        "national_rail_schedule_stops",
+        "national_rail_fare_classes",
+        "seats",
+        "ticket_types",
+        "users",
+        "user_credentials",
+        "bookings",
+        "metro_travel_history",
+        "payments",
+        "feedbacks",
+        "refund_policies",
+        "refund_policy_windows",
+        "station_closures",
+    ]
+    for table in tables:
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT setval(
+                    pg_get_serial_sequence(%s, 'id'),
+                    COALESCE((SELECT MAX(id) FROM {}), 1),
+                    COALESCE((SELECT MAX(id) FROM {}), 0) > 0
+                )
+                """
+            ).format(sql.Identifier(table), sql.Identifier(table)),
+            (table,),
+        )
+    print("  id sequences: reset to current MAX(id)")
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -409,12 +506,13 @@ def main():
         seed_national_rail_schedules(cur)
         seed_seat_layouts(cur)
         seed_users(cur)
+        seed_ticket_types(cur)
         seed_national_rail_bookings(cur)
         seed_metro_travels(cur)
         seed_payments(cur)
         seed_feedback(cur)
-        seed_ticket_types(cur)
         seed_refund_policies(cur)
+        reset_id_sequences(cur)
         conn.commit()
         print("\nAll done. Database seeded successfully.")
     except Exception as e:

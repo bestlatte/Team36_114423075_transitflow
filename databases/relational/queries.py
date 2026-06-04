@@ -31,6 +31,10 @@ import psycopg2.extras
 from skeleton.config import PG_DSN, VECTOR_TOP_K, VECTOR_SIMILARITY_THRESHOLD
 
 
+SERVICE_START_DATE = datetime(2026, 1, 1, tzinfo=timezone.utc).date()
+SERVICE_END_DATE = datetime(2026, 12, 31, tzinfo=timezone.utc).date()
+
+
 @contextmanager
 def _connect():
     """Yield a new psycopg2 connection with autocommit enabled, then close it."""
@@ -72,6 +76,10 @@ def _verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
 
 
+def _normalize_secret_answer(answer: str) -> str:
+    return answer.strip().lower()
+
+
 def _date_at_utc(date_text: str) -> datetime:
     parsed = datetime.strptime(date_text, "%Y-%m-%d")
     return parsed.replace(tzinfo=timezone.utc)
@@ -109,6 +117,16 @@ def _weekday_code(date_text: str) -> str:
     return _date_at_utc(date_text).strftime("%a").lower()
 
 
+def _is_supported_service_date(date_text: Optional[str]) -> bool:
+    if not date_text:
+        return True
+    try:
+        service_date = _date_at_utc(date_text).date()
+    except ValueError:
+        return False
+    return SERVICE_START_DATE <= service_date <= SERVICE_END_DATE
+
+
 # ── NATIONAL RAIL AVAILABILITY ────────────────────────────────────────────────
 
 def query_national_rail_availability(
@@ -117,10 +135,36 @@ def query_national_rail_availability(
     travel_date: Optional[str] = None,
 ) -> list[dict]:
     """Return schedules that serve both stations in the correct direction."""
+    origin_id = origin_id.strip().upper()
+    destination_id = destination_id.strip().upper()
+    travel_date = travel_date.strip() if travel_date else None
+
+    if not _is_supported_service_date(travel_date):
+        return []
+
     sql = """
         SELECT
             nrs.schedule_id,
-            COUNT(s.seat_id) - COUNT(b.booking_id) AS available_seats
+            nrs.line,
+            nrs.service_type,
+            nrs.direction,
+            nrs.origin_station_id AS schedule_origin_id,
+            nrs.destination_station_id AS schedule_destination_id,
+            nrs.first_train_time,
+            nrs.last_train_time,
+            nrs.frequency_min,
+            nrs.operates_on,
+            o_stop.stop_order AS origin_stop_order,
+            d_stop.stop_order AS dest_stop_order,
+            o_stop.travel_time_from_origin_min AS origin_travel_min,
+            d_stop.travel_time_from_origin_min AS dest_travel_min,
+            (d_stop.stop_order - o_stop.stop_order) AS stops_travelled,
+            (d_stop.travel_time_from_origin_min - o_stop.travel_time_from_origin_min) AS journey_time_min,
+            origin_st.name AS origin_name,
+            dest_st.name AS destination_name,
+            COUNT(DISTINCT s.seat_id) AS total_seats,
+            COUNT(DISTINCT b.booking_id) AS booked_seats,
+            GREATEST(COUNT(DISTINCT s.seat_id) - COUNT(DISTINCT b.booking_id), 0) AS available_seats
         FROM national_rail_schedules nrs
         JOIN national_rail_schedule_stops o_stop
             ON o_stop.schedule_id = nrs.schedule_id
@@ -147,8 +191,24 @@ def query_national_rail_availability(
             AND (%s::date IS NOT NULL AND b.travel_date::date = %s::date)
         WHERE o_stop.stop_order < d_stop.stop_order
             AND nrs.is_deleted = FALSE
-            AND (%s IS NULL OR %s = ANY(nrs.operates_on))
-        GROUP BY nrs.schedule_id
+            AND (%s IS NULL OR LOWER(%s) = ANY(nrs.operates_on))
+        GROUP BY
+            nrs.schedule_id,
+            nrs.line,
+            nrs.service_type,
+            nrs.direction,
+            nrs.origin_station_id,
+            nrs.destination_station_id,
+            nrs.first_train_time,
+            nrs.last_train_time,
+            nrs.frequency_min,
+            nrs.operates_on,
+            o_stop.stop_order,
+            d_stop.stop_order,
+            o_stop.travel_time_from_origin_min,
+            d_stop.travel_time_from_origin_min,
+            origin_st.name,
+            dest_st.name
         ORDER BY nrs.schedule_id
     """
     with _connect() as conn:
@@ -167,13 +227,22 @@ def query_national_rail_availability(
                     weekday,
                 ),
             )
-            return [
-                {
-                    "schedule_id": row["schedule_id"],
-                    "available_seats": int(row["available_seats"]),
-                }
-                for row in cur.fetchall()
-            ]
+            results = []
+            for row in cur.fetchall():
+                d = dict(row)
+                d["first_train_time"] = _time_text(d["first_train_time"])
+                d["last_train_time"] = _time_text(d["last_train_time"])
+                d["origin_stop_order"] = int(d["origin_stop_order"])
+                d["dest_stop_order"] = int(d["dest_stop_order"])
+                d["origin_travel_min"] = int(d["origin_travel_min"])
+                d["dest_travel_min"] = int(d["dest_travel_min"])
+                d["stops_travelled"] = int(d["stops_travelled"])
+                d["journey_time_min"] = int(d["journey_time_min"])
+                d["total_seats"] = int(d["total_seats"])
+                d["booked_seats"] = int(d["booked_seats"])
+                d["available_seats"] = int(d["available_seats"])
+                results.append(d)
+            return results
 
 
 def query_national_rail_fare(
@@ -457,13 +526,21 @@ def query_user_bookings(user_email: str) -> dict:
 def query_payment_info(booking_id: str) -> Optional[dict]:
     """Return payment record for a booking or metro trip."""
     sql = """
-        SELECT payment_id, booking_id, amount_usd, method, status, paid_at
+        SELECT
+            payment_id,
+            COALESCE(booking_id, trip_id) AS booking_id,
+            booking_id AS national_rail_booking_id,
+            trip_id,
+            amount_usd,
+            method,
+            status,
+            paid_at
         FROM payments
-        WHERE booking_id = %s AND is_deleted = FALSE
+        WHERE (booking_id = %s OR trip_id = %s) AND is_deleted = FALSE
     """
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(sql, (booking_id,))
+            cur.execute(sql, (booking_id, booking_id))
             row = cur.fetchone()
             if not row:
                 return None
@@ -629,8 +706,8 @@ def execute_booking(
 
             cur.execute("""
                 INSERT INTO payments (
-                    payment_id, booking_id, amount_usd, method, status, paid_at
-                ) VALUES (%s, %s, %s, 'credit_card', 'paid', %s)
+                    payment_id, booking_id, trip_id, amount_usd, method, status, paid_at
+                ) VALUES (%s, %s, NULL, %s, 'credit_card', 'paid', %s)
             """, (payment_id, booking_id, amount, now))
 
         conn.commit()
@@ -812,6 +889,7 @@ def register_user(
             dob = _date_at_utc(f"{year_of_birth}-01-01")
             now = datetime.now(timezone.utc)
             password_hash = _hash_password(password)
+            secret_answer_hash = _hash_password(_normalize_secret_answer(secret_answer))
 
             cur.execute("""
                 INSERT INTO users (
@@ -822,9 +900,9 @@ def register_user(
 
             cur.execute("""
                 INSERT INTO user_credentials (
-                    user_id, password_hash, secret_question, secret_answer
+                    user_id, password_hash, secret_question, secret_answer_hash
                 ) VALUES (%s, %s, %s, %s)
-            """, (new_user_id, password_hash, secret_question, secret_answer))
+            """, (new_user_id, password_hash, secret_question, secret_answer_hash))
 
         conn.commit()
         return True, new_user_id
@@ -882,7 +960,7 @@ def get_user_secret_question(email: str) -> Optional[str]:
 def verify_secret_answer(email: str, answer: str) -> bool:
     """Return True if the provided answer matches the stored secret answer (case-insensitive)."""
     sql = """
-        SELECT uc.secret_answer
+        SELECT uc.secret_answer_hash
         FROM user_credentials uc
         JOIN users u ON u.user_id = uc.user_id AND u.is_deleted = FALSE
         WHERE u.email = %s AND uc.is_deleted = FALSE
@@ -893,7 +971,10 @@ def verify_secret_answer(email: str, answer: str) -> bool:
             row = cur.fetchone()
             if not row:
                 return False
-            return row["secret_answer"].strip().lower() == answer.strip().lower()
+            return _verify_password(
+                _normalize_secret_answer(answer),
+                row["secret_answer_hash"],
+            )
 
 
 def update_password(email: str, new_password: str) -> bool:
