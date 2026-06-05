@@ -2,11 +2,11 @@
 
 ## 1. Team Members
 
-| Full Name | Student ID | GitHub Username | Email                        |
-| --------- | ---------- | --------------- | ---------------------------- |
-| 李軒毅    | 114423075  | bestlatte       | x123456789xxxxxxtw@gmail.com |
-| 柳炫州    | 114423071  | tw1040407-sys   | tw1040407@gmail.com          |
-| 黃昱鈞    | 114423011  | SeanHuang110633 | sean02050923@gmail.com       |
+| Full Name | Student ID | GitHub Username               | Email                        |
+| --------- | ---------- | ----------------------------- | ---------------------------- |
+| 李軒毅    | 114423075  | bestlatte                     | x123456789xxxxxxtw@gmail.com |
+| 柳炫州    | 114423071  | tw1040407-sys                 | tw1040407@gmail.com          |
+| 黃昱鈞    | 114423011  | SeanHuang110633、yahappylemon | sean02050923@gmail.com       |
 
 ---
 
