@@ -9,6 +9,7 @@ You must first design and create your tables in databases/relational/schema.sql.
 Safe to re-run: implement your inserts with ON CONFLICT DO NOTHING.
 """
 
+
 import json
 import os
 import sys
@@ -20,9 +21,9 @@ from psycopg2 import sql
 from psycopg2.extras import execute_values
 
 # ── resolve paths ────────────────────────────────────────────────────────────
-SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
-DATA_DIR    = os.path.join(PROJECT_DIR, "train-mock-data")
+DATA_DIR = os.path.join(PROJECT_DIR, "train-mock-data")
 
 sys.path.insert(0, PROJECT_DIR)
 from skeleton import config as cfg
@@ -174,7 +175,8 @@ def seed_metro_schedules(cur):
     n = insert_many(cur, "metro_schedules", sched_cols, sched_rows)
     print(f"  metro_schedules: {n} rows")
 
-    stop_cols = ["schedule_id", "station_id", "stop_order", "travel_time_from_origin_min"]
+    stop_cols = ["schedule_id", "station_id",
+                 "stop_order", "travel_time_from_origin_min"]
     stop_rows = []
     for d in data:
         times = d["travel_time_from_origin_min"]
@@ -212,7 +214,8 @@ def seed_national_rail_schedules(cur):
     )
     print(f"  national_rail_schedules: {n} rows")
 
-    stop_cols = ["schedule_id", "station_id", "stop_order", "travel_time_from_origin_min"]
+    stop_cols = ["schedule_id", "station_id",
+                 "stop_order", "travel_time_from_origin_min"]
     stop_rows = []
     for d in data:
         times = d["travel_time_from_origin_min"]
@@ -227,7 +230,8 @@ def seed_national_rail_schedules(cur):
     )
     print(f"  national_rail_schedule_stops: {n} rows")
 
-    fare_cols = ["schedule_id", "fare_class", "base_fare_usd", "per_stop_rate_usd"]
+    fare_cols = ["schedule_id", "fare_class",
+                 "base_fare_usd", "per_stop_rate_usd"]
     fare_rows = []
     for d in data:
         for fc, rates in d["fare_classes"].items():
@@ -248,7 +252,8 @@ def seed_national_rail_schedules(cur):
 def seed_seat_layouts(cur):
     data = load("national_rail_seat_layouts.json")
     schedules = load("national_rail_schedules.json")
-    cols = ["schedule_id", "coach", "fare_class", "seat_id", "seat_row", "seat_column"]
+    cols = ["schedule_id", "coach", "fare_class",
+            "seat_id", "seat_row", "seat_column"]
     rows = []
 
     layouts_by_schedule = {layout["schedule_id"]: layout for layout in data}
@@ -281,7 +286,8 @@ def seed_users(cur):
         "user_id", "first_name", "surname", "full_name",
         "email", "phone", "date_of_birth", "is_active", "registered_at",
     ]
-    cred_cols = ["user_id", "password_hash", "secret_question", "secret_answer_hash"]
+    cred_cols = ["user_id", "password_hash",
+                 "secret_question", "secret_answer_hash"]
 
     user_rows = []
     cred_rows = []
@@ -293,7 +299,8 @@ def seed_users(cur):
         user_rows.append((
             d["user_id"], first_name, surname, d["full_name"],
             d["email"], d.get("phone"),
-            _date_at_utc(d["date_of_birth"]) if d.get("date_of_birth") else None,
+            _date_at_utc(d["date_of_birth"]) if d.get(
+                "date_of_birth") else None,
             d.get("is_active", True), d["registered_at"],
         ))
 
@@ -349,7 +356,8 @@ def seed_metro_travels(cur):
         (
             d["trip_id"], d["user_id"], d["schedule_id"],
             d["origin_station_id"], d["destination_station_id"],
-            _date_at_utc(d["travel_date"]), d["ticket_type"], d.get("day_pass_ref"),
+            _date_at_utc(d["travel_date"]), d["ticket_type"], d.get(
+                "day_pass_ref"),
             d.get("stops_travelled"), d["amount_usd"], d["status"],
             d.get("purchased_at"), d.get("travelled_at"),
         )
@@ -361,11 +369,13 @@ def seed_metro_travels(cur):
 
 def seed_payments(cur):
     data = load("payments.json")
-    cols = ["payment_id", "booking_id", "trip_id", "amount_usd", "method", "status", "paid_at"]
+    cols = ["payment_id", "booking_id", "trip_id",
+            "amount_usd", "method", "status", "paid_at"]
     rows = []
     for d in data:
         transaction_id = d["booking_id"]
-        booking_id = transaction_id if transaction_id.startswith("BK") else None
+        booking_id = transaction_id if transaction_id.startswith(
+            "BK") else None
         trip_id = transaction_id if transaction_id.startswith("MT") else None
         rows.append((
             d["payment_id"],
@@ -382,9 +392,11 @@ def seed_payments(cur):
 
 def seed_feedback(cur):
     data = load("feedback.json")
-    cols = ["feedback_id", "booking_id", "user_id", "rating", "comment", "submitted_at"]
+    cols = ["feedback_id", "booking_id", "user_id",
+            "rating", "comment", "submitted_at"]
     rows = [
-        (d["feedback_id"], d["booking_id"], d["user_id"], d["rating"], d.get("comment"), d["submitted_at"])
+        (d["feedback_id"], d["booking_id"], d["user_id"],
+         d["rating"], d.get("comment"), d["submitted_at"])
         for d in data
     ]
     n = insert_many(cur, "feedbacks", cols, rows)
@@ -395,7 +407,8 @@ def seed_ticket_types(cur):
     data = load("ticket_types.json")
     cols = ["ticket_type", "display_name", "description", "available_on"]
     rows = [
-        (d["ticket_type"], d["display_name"], d["description"], d.get("available_on", []))
+        (d["ticket_type"], d["display_name"],
+         d["description"], d.get("available_on", []))
         for d in data
     ]
     n = insert_many(cur, "ticket_types", cols, rows)
@@ -405,7 +418,8 @@ def seed_ticket_types(cur):
 def seed_refund_policies(cur):
     data = load("refund_policy.json")
 
-    policy_cols = ["policy_id", "label", "network_type", "service_type", "notes"]
+    policy_cols = ["policy_id", "label",
+                   "network_type", "service_type", "notes"]
     window_cols = [
         "policy_id", "window_id", "label", "condition_text",
         "hours_before_departure_min", "hours_before_departure_max",
@@ -472,7 +486,6 @@ def reset_id_sequences(cur):
         "feedbacks",
         "refund_policies",
         "refund_policy_windows",
-        "station_closures",
     ]
     for table in tables:
         cur.execute(

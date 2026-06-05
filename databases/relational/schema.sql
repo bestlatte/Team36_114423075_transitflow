@@ -482,31 +482,3 @@ CREATE TABLE IF NOT EXISTS policy_documents (
 
 CREATE INDEX IF NOT EXISTS idx_policy_documents_embedding
     ON policy_documents USING hnsw (embedding vector_cosine_ops);
-
--- ============================================================
--- # TASK 6 EXTENSION: Station Closures Log (即時車站封閉紀錄)
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS station_closures (
-    id           BIGSERIAL   PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
-    network_type VARCHAR(20) NOT NULL CHECK (network_type IN ('metro', 'national_rail')),
-    station_id   VARCHAR(10) NOT NULL,
-    reason       TEXT        NOT NULL,
-    closed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    reopened_at  TIMESTAMPTZ,
-    is_active    BOOLEAN     NOT NULL DEFAULT TRUE,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    is_deleted   BOOLEAN     NOT NULL DEFAULT FALSE
-);
-
-CREATE INDEX IF NOT EXISTS idx_station_closures_active 
-    ON station_closures(is_active);
-
-CREATE INDEX IF NOT EXISTS idx_station_closures_network_station
-    ON station_closures(network_type, station_id);
-
-DROP TRIGGER IF EXISTS trg_station_closures_updated_at ON station_closures;
-CREATE TRIGGER trg_station_closures_updated_at
-BEFORE UPDATE ON station_closures
-FOR EACH ROW EXECUTE FUNCTION set_updated_at();
