@@ -28,9 +28,12 @@ The agent will automatically use whatever you put in the databases.
 """
 
 # TASK 6 EXTENSION:
-# This file was updated so the agent can route service disruption questions
-# to the existing RAG policy search tool. The new service disruption policies
-# are stored as vector documents and retrieved through search_policy.
+# This file includes routing support for two optional extensions:
+# 1. Vector/RAG extension: routes service disruption policy questions
+#    such as replacement bus, severe disruption refund, and alternative
+#    transport reimbursement to search_policy.
+# 2. Graph extension: routes explicit station open/close commands to
+#    toggle_station_closure so Neo4j can update station operational status.
 
 from __future__ import annotations
 
@@ -236,6 +239,11 @@ TOOLS = [
         },
         "required": ["booking_id"],
     },
+    # TASK 6 EXTENSION: Vector/RAG policy retrieval
+    # The service_disruption_policy.json entries are embedded into pgvector.
+    # This tool description was extended so replacement bus, suspended service,
+    # severe disruption refund, and alternative transport reimbursement questions
+    # are routed to the RAG policy search.
     {
         "name": "search_policy",
         "description": (
@@ -286,6 +294,9 @@ TOOLS = [
         },
         "required": ["station_id"],
     },
+    # TASK 6 EXTENSION: Graph station closure control
+    # This tool lets the agent change a station's operational status in Neo4j.
+    # Closed stations can then be avoided by graph route queries.
     {
         "name": "toggle_station_closure",
         "description": (
@@ -460,7 +471,9 @@ def _execute_tool(
             )
             result = [{"route_number": i + 1, "legs": r}
                       for i, r in enumerate(routes)]
-
+        # TASK 6 EXTENSION: Graph station closure execution
+        # Calls Neo4j to mark a station as open or closed.
+        # Routing queries then use the station's is_closed status.
         elif tool_name == "toggle_station_closure":
             result = execute_toggle_station_closure(**params)
 
@@ -642,6 +655,11 @@ JSON:"""
     if llm.get_chat_provider() == "ollama":
         # llama3.2:1b is fine-tuned for native tool calling — far more reliable than
         # prompt-based JSON routing which produces malformed output on 1B models.
+
+        # TASK 6 EXTENSION:
+        # The router prompt includes both extensions:
+        # - close/open station commands should use toggle_station_closure
+        # - service disruption policy questions should use search_policy
         tool_calls = llm.ollama_tool_call(
             recent_history, TOOLS, _augmented_message,
             system_prompt=(
