@@ -55,25 +55,26 @@ def query_shortest_route(
     destination_id: str,
     network: str = "auto",
 ) -> dict:
-    """
-    Find the fastest path between two stations, minimising total travel time.
-    Uses apoc.algo.dijkstra (APOC required; enabled in docker-compose.yml).
-
-    Args:
-        origin_id:       e.g. "MS01" or "NR01"
-        destination_id:  e.g. "MS09" or "NR05"
-        network:         "metro", "rail", or "auto" (inferred from IDs)
-
-    Returns:
-        dict with keys: found, origin_id, destination_id,
-                        total_time_min, path (list of station dicts), legs
-    """
-    """Find the fastest path between two stations, minimising total travel time."""
+    """Find the fastest path between two stations, minimising total travel time and avoiding closed stations."""
+    # 我們不直接用 apoc.algo.dijkstra (因為它不支援動態節點過濾)
+    # 我們改用 Neo4j 更強大的路徑擴展演算法 (apoc.path.expandConfig)，它允許我們定義「黑名單節點」
+    
     cypher = """
-        MATCH (start:Station {id: $origin_id}), (end:Station {id: $destination_id})
-        CALL apoc.algo.dijkstra(start, end, 'CONNECTS_TO|INTERCHANGE', 'travel_time_min') YIELD path, weight
-        WHERE NONE(n IN nodes(path)[1..-1] WHERE n.is_closed = true)
-        RETURN weight as total_time_min, nodes(path) as nodes
+        MATCH (start:Station {id: $origin_id})
+        MATCH (end:Station {id: $destination_id})
+        // 找出所有封閉的車站，做成一個黑名單列表
+        MATCH (closed:Station {is_closed: true})
+        WITH start, end, collect(closed) as closed_nodes
+        // 使用 APOC 的路徑擴展，設定黑名單 (deniedNodes)
+        CALL apoc.path.expandConfig(start, {
+            relationshipFilter: 'CONNECTS_TO|INTERCHANGE',
+            endNodes: [end],
+            deniedNodes: closed_nodes,
+            limit: 1
+        }) YIELD path
+        // 自己計算整條路徑的 travel_time_min 總和
+        WITH path, reduce(cost = 0, r in relationships(path) | cost + r.travel_time_min) AS total_time_min
+        RETURN total_time_min, nodes(path) as nodes
     """
     with _driver() as driver:
         with driver.session() as session:
@@ -93,11 +94,12 @@ def query_shortest_route(
                     "legs": len(stations) - 1
                 }
             except Exception:
-                # 備用安全機制：避開 is_closed = true 的車站 (# TASK 6 EXTENSION)
+                # 備用安全機制：使用原生 Cypher 找出不經過封閉車站的路徑
                 fallback_cypher = """
-                    MATCH p=shortestPath((start:Station {id: $origin_id})-[:CONNECTS_TO|INTERCHANGE*]->(end:Station {id: $destination_id}))
-                    WHERE NONE(n IN nodes(p)[1..-1] WHERE n.is_closed = true)
+                    MATCH p=(start:Station {id: $origin_id})-[:CONNECTS_TO|INTERCHANGE*..15]->(end:Station {id: $destination_id})
+                    WHERE NONE(n IN nodes(p) WHERE n.is_closed = true)
                     RETURN nodes(p) as nodes, length(p) as legs
+                    ORDER BY length(p) ASC LIMIT 1
                 """
                 result = session.run(fallback_cypher, origin_id=origin_id, destination_id=destination_id)
                 row = result.single()
