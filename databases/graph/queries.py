@@ -48,39 +48,33 @@ def example_count_nodes() -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-# ── FASTEST ROUTE (Dijkstra by travel_time_min) ───────────────────────────────
-
+# ── FASTEST ROUTE (Native Graph Algorithm) ───────────────────────────────
 def query_shortest_route(
     origin_id: str,
     destination_id: str,
     network: str = "auto",
 ) -> dict:
     """Find the fastest path between two stations, minimising total travel time and avoiding closed stations."""
-    # 我們不直接用 apoc.algo.dijkstra (因為它不支援動態節點過濾)
-    # 我們改用 Neo4j 更強大的路徑擴展演算法 (apoc.path.expandConfig)，它允許我們定義「黑名單節點」
-    
+    # 完美解法：找出所有路徑，嚴格過濾掉封閉車站，然後依照 travel_time_min 總和排序拿最快的那條
     cypher = """
-        MATCH (start:Station {id: $origin_id})
-        MATCH (end:Station {id: $destination_id})
-        // 找出所有封閉的車站，做成一個黑名單列表
-        MATCH (closed:Station {is_closed: true})
-        WITH start, end, collect(closed) as closed_nodes
-        // 使用 APOC 的路徑擴展，設定黑名單 (deniedNodes)
-        CALL apoc.path.expandConfig(start, {
-            relationshipFilter: 'CONNECTS_TO|INTERCHANGE',
-            endNodes: [end],
-            deniedNodes: closed_nodes,
-            limit: 1
-        }) YIELD path
-        // 自己計算整條路徑的 travel_time_min 總和
-        WITH path, reduce(cost = 0, r in relationships(path) | cost + r.travel_time_min) AS total_time_min
-        RETURN total_time_min, nodes(path) as nodes
+        MATCH (start:Station {id: $origin_id}), (end:Station {id: $destination_id})
+        // 尋找 1 到 15 站之間的所有可能路線
+        MATCH p=(start)-[:CONNECTS_TO|INTERCHANGE*1..15]->(end)
+        // 絕對防禦：這條路線上的「每一個」車站，都不可以是封閉狀態
+        WHERE ALL(n IN nodes(p) WHERE n.is_closed = false OR n.is_closed IS NULL)
+        // 自己把沿路的 travel_time_min 加總起來
+        WITH p, reduce(cost = 0, r in relationships(p) | cost + coalesce(r.travel_time_min, 0)) AS total_time_min
+        // 依照總時間由小到大排序，只拿第 1 筆 (最快的那條)
+        ORDER BY total_time_min ASC LIMIT 1
+        RETURN total_time_min, nodes(p) as nodes, length(p) as legs
     """
     with _driver() as driver:
         with driver.session() as session:
             try:
                 result = session.run(cypher, origin_id=origin_id, destination_id=destination_id)
                 row = result.single()
+                
+                # 防呆：如果真的找不到路 (例如完全不通)
                 if not row:
                     return {"found": False, "origin_id": origin_id, "destination_id": destination_id}
                 
@@ -91,29 +85,11 @@ def query_shortest_route(
                     "destination_id": destination_id,
                     "total_time_min": float(row["total_time_min"]),
                     "path": stations,
-                    "legs": len(stations) - 1
-                }
-            except Exception:
-                # 備用安全機制：使用原生 Cypher 找出不經過封閉車站的路徑
-                fallback_cypher = """
-                    MATCH p=(start:Station {id: $origin_id})-[:CONNECTS_TO|INTERCHANGE*..15]->(end:Station {id: $destination_id})
-                    WHERE NONE(n IN nodes(p) WHERE n.is_closed = true)
-                    RETURN nodes(p) as nodes, length(p) as legs
-                    ORDER BY length(p) ASC LIMIT 1
-                """
-                result = session.run(fallback_cypher, origin_id=origin_id, destination_id=destination_id)
-                row = result.single()
-                if not row or not row["nodes"]:
-                    return {"found": False, "origin_id": origin_id, "destination_id": destination_id}
-                stations = [{"station_id": n["id"], "name": n["name"]} for n in row["nodes"]]
-                return {
-                    "found": True,
-                    "origin_id": origin_id,
-                    "destination_id": destination_id,
-                    "total_time_min": row["legs"] * 4,
-                    "path": stations,
                     "legs": row["legs"]
                 }
+            except Exception as e:
+                print(f"Graph Query Error: {e}")
+                return {"found": False, "origin_id": origin_id, "destination_id": destination_id}
 
 
 # ── CHEAPEST ROUTE (Dijkstra by fare) ────────────────────────────────────────
