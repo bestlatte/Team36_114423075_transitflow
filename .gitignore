@@ -60,3 +60,6 @@ gradio_cached_examples/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# grading files
+/IM2002-grading-students
