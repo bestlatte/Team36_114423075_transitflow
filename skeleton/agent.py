@@ -59,6 +59,7 @@ from databases.graph.queries import (
     query_alternative_routes,
     query_interchange_path,
     query_delay_ripple,
+    execute_toggle_station_closure,
 )
 
 
@@ -285,6 +286,18 @@ TOOLS = [
         },
         "required": ["station_id"],
     },
+    {
+        "name": "toggle_station_closure",
+        "description": (
+            "Change the operational status of a station (open or closed). "
+            "Use this when a user reports an emergency, accident, or explicitly asks to close/open a station."
+        ),
+        "parameters": {
+            "station_id": {"type": "string", "description": "Station ID e.g. NR03"},
+            "close_station": {"type": "boolean", "description": "True to close the station, False to reopen it"},
+        },
+        "required": ["station_id", "close_station"],
+    },
 ]
 
 TOOLS_SCHEMA = """\
@@ -298,6 +311,7 @@ make_booking(schedule_id, origin_station_id, destination_station_id, travel_date
 cancel_booking(booking_id)
 get_user_bookings()
 search_policy(query)
+toggle_station_closure(station_id, close_station)
 find_alternative_routes(origin_id, destination_id, avoid_station_id, network?)
 get_delay_ripple(station_id, hops?)"""
 
@@ -446,6 +460,11 @@ def _execute_tool(
             )
             result = [{"route_number": i + 1, "legs": r}
                       for i, r in enumerate(routes)]
+
+        elif tool_name == "toggle_station_closure":
+            result = execute_toggle_station_closure(**params)
+
+
 
         elif tool_name == "get_delay_ripple":
             result = query_delay_ripple(
@@ -631,7 +650,8 @@ JSON:"""
                 "My bookings/tickets/travel history → get_user_bookings (no params). "
                 "Book a ticket / make a booking → check_national_rail_availability first, then make_booking. "
                 "Cancel a booking → cancel_booking. "
-                "Policy/rules/conduct/compensation/luggage/bicycle/service disruption/station closure/replacement bus questions → search_policy. "
+                "Station closure, emergency, or changing station status -> toggle_station_closure. "
+                "Policy/rules/conduct/compensation/luggage/bicycle questions → search_policy. "
                 "Route/directions/fastest/quickest/how-to-get/path questions → find_route ONLY (never get_metro_fare). "
                 "Metro fare/price/cost/how-much-does-it-cost questions → get_metro_fare. "
                 "Rail fare/cost/price questions → check_national_rail_availability then get_national_rail_fare. "
