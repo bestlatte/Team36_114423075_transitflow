@@ -5,9 +5,11 @@ Students: copy .env.example to .env and fill in your API key.
 """
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(PROJECT_ROOT / ".env")
 
 # ── LLM Provider ──────────────────────────────────────────────────────────────
 # Set LLM_PROVIDER to "gemini" or "ollama"

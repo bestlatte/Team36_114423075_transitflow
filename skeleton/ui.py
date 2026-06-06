@@ -34,20 +34,29 @@ SECRET_QUESTIONS = [
 
 # ── Chat handler ───────────────────────────────────────────────────────────────
 
+def _format_chat_error(err: Exception) -> str:
+    return f"Sorry, the assistant hit an error while processing your message:\n\n`{type(err).__name__}: {err}`"
+
+
 def chat(user_message: str, history_display: list, agent_history: list,
          show_debug: bool, current_user: str):
     if not user_message.strip():
         return history_display, agent_history, gr.update()
 
-    if show_debug:
-        answer, new_agent_history, debug_text = run_agent(
-            user_message, agent_history, debug=True, current_user_email=current_user
-        )
-    else:
-        answer, new_agent_history = run_agent(
-            user_message, agent_history, debug=False, current_user_email=current_user
-        )
-        debug_text = ""
+    try:
+        if show_debug:
+            answer, new_agent_history, debug_text = run_agent(
+                user_message, agent_history, debug=True, current_user_email=current_user
+            )
+        else:
+            answer, new_agent_history = run_agent(
+                user_message, agent_history, debug=False, current_user_email=current_user
+            )
+            debug_text = ""
+    except Exception as err:
+        answer = _format_chat_error(err)
+        new_agent_history = agent_history
+        debug_text = f"**Runtime error:** `{type(err).__name__}: {err}`"
 
     history_display = history_display + [
         {"role": "user",      "content": user_message},

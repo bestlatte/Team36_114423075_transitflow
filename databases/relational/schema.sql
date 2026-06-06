@@ -3,219 +3,482 @@
 --  Seed data is loaded separately by: python skeleton/seed_postgres.py
 --
 --  TWO ROLES:
---    1. Relational  → dual-network transit data you design below
+--    1. Relational  → dual-network transit data
 --    2. Vector      → policy documents for RAG (provided — do not modify)
--- ============================================================
-
--- ============================================================
---  STUDENT TASK — Design and create your relational tables here
---
---  Start from the mock data in train-mock-data/:
---    metro_stations.json, national_rail_stations.json
---    metro_schedules.json, national_rail_schedules.json
---    national_rail_seat_layouts.json
---    registered_users.json
---    bookings.json, metro_travel_history.json
---    payments.json, feedback.json
---
---  Think about:
---    - What tables do you need?
---    - What columns and data types?
---    - Which fields are primary keys? Which are foreign keys?
---    - What constraints make sense?
---
---  Apply your schema with:
---    docker-compose down -v && docker-compose up -d
--- ============================================================
-
-
--- 1. 建立捷運車站資料表 (metro_stations)
-CREATE TABLE metro_stations (
-    station_id VARCHAR(10) PRIMARY KEY,
-    name VARCHAR(50) NOT NULL,
-    is_interchange_metro BOOLEAN DEFAULT FALSE,
-    is_interchange_national_rail BOOLEAN DEFAULT FALSE,
-    interchange_national_rail_station_id VARCHAR(10)
-);
-
--- 2. 建立英國鐵路車站資料表 (national_rail_stations)
-CREATE TABLE national_rail_stations (
-    station_id VARCHAR(10) PRIMARY KEY,
-    name VARCHAR(50) NOT NULL,
-    is_interchange_national_rail BOOLEAN DEFAULT FALSE,
-    is_interchange_metro BOOLEAN DEFAULT FALSE,
-    interchange_metro_station_id VARCHAR(10)
-);
-
--- 3. 建立捷運時刻表主檔 (metro_schedules)
-CREATE TABLE metro_schedules (
-    schedule_id VARCHAR(30) PRIMARY KEY,
-    line VARCHAR(10) NOT NULL,
-    direction VARCHAR(20),
-    origin_station_id VARCHAR(10),
-    destination_station_id VARCHAR(10),
-    first_train_time TIME,
-    last_train_time TIME,
-    base_fare_usd NUMERIC(5,2),
-    per_stop_rate_usd NUMERIC(5,2),
-    frequency_min INTEGER,
-    operates_on TEXT[] 
-);
-
--- 4. 建立捷運時刻表明細 (metro_schedule_stops)
-CREATE TABLE metro_schedule_stops (
-    schedule_id VARCHAR(30) REFERENCES metro_schedules(schedule_id),
-    station_id VARCHAR(10) REFERENCES metro_stations(station_id),
-    stop_order INTEGER NOT NULL,
-    travel_time_min INTEGER NOT NULL,
-    PRIMARY KEY (schedule_id, station_id)
-);
-
--- 5. 建立英國鐵路時刻表主檔 (national_rail_schedules)
-CREATE TABLE national_rail_schedules (
-    schedule_id VARCHAR(30) PRIMARY KEY,
-    line VARCHAR(10) NOT NULL,
-    service_type VARCHAR(20),
-    direction VARCHAR(20),
-    origin_station_id VARCHAR(10) REFERENCES national_rail_stations(station_id),
-    destination_station_id VARCHAR(10) REFERENCES national_rail_stations(station_id),
-    first_train_time TIME,
-    last_train_time TIME,
-    fare_classes JSONB, -- 使用 JSONB 型態來儲存複雜的票價結構
-    frequency_min INTEGER,
-    operates_on TEXT[]
-);
-
--- 6. 建立英國鐵路時刻表停靠站明細 (national_rail_schedule_stops)
-CREATE TABLE national_rail_schedule_stops (
-    schedule_id VARCHAR(30) REFERENCES national_rail_schedules(schedule_id),
-    station_id VARCHAR(10) REFERENCES national_rail_stations(station_id),
-    stop_order INTEGER NOT NULL,
-    travel_time_min INTEGER NOT NULL,
-    PRIMARY KEY (schedule_id, station_id)
-);
-
--- 7. 建立英國鐵路座位配置主檔 (national_rail_seat_layouts)
-CREATE TABLE national_rail_seat_layouts (
-    layout_id VARCHAR(10) PRIMARY KEY,
-    schedule_id VARCHAR(30) REFERENCES national_rail_schedules(schedule_id)
-);
-
--- 8. 建立英國鐵路座位明細 (national_rail_seats)
-CREATE TABLE national_rail_seats (
-    layout_id VARCHAR(10) REFERENCES national_rail_seat_layouts(layout_id),
-    coach VARCHAR(5) NOT NULL,
-    fare_class VARCHAR(20) NOT NULL,
-    seat_id VARCHAR(10) NOT NULL,
-    seat_row INTEGER NOT NULL,
-    seat_column VARCHAR(5) NOT NULL,
-    PRIMARY KEY (layout_id, coach, seat_id)
-);
-
--- 9. 建立註冊使用者資料表 (registered_users)
-CREATE TABLE registered_users (
-    user_id VARCHAR(10) PRIMARY KEY,
-    full_name VARCHAR(100) NOT NULL,
-    email VARCHAR(100) UNIQUE NOT NULL, -- 信箱通常不能重複，所以加上 UNIQUE
-    password VARCHAR(100) NOT NULL,
-    phone VARCHAR(20),
-    date_of_birth DATE, -- 只有日期 (例如 1990-03-14)
-    secret_question VARCHAR(255),
-    secret_answer VARCHAR(255),
-    registered_at TIMESTAMP WITH TIME ZONE, -- 包含精確時間與時區 (例如 2023-01-10T09:00:00Z)
-    is_active BOOLEAN DEFAULT TRUE
-);
-
--- 10. 建立英國鐵路訂票紀錄 (national_rail_bookings)
-CREATE TABLE national_rail_bookings (
-    booking_id VARCHAR(10) PRIMARY KEY,
-    user_id VARCHAR(10) REFERENCES registered_users(user_id),
-    schedule_id VARCHAR(30) REFERENCES national_rail_schedules(schedule_id),
-    origin_station_id VARCHAR(10) REFERENCES national_rail_stations(station_id),
-    destination_station_id VARCHAR(10) REFERENCES national_rail_stations(station_id),
-    travel_date DATE NOT NULL,
-    departure_time TIME,
-    ticket_type VARCHAR(20),
-    fare_class VARCHAR(20),
-    coach VARCHAR(5),
-    seat_id VARCHAR(10),
-    stops_travelled INTEGER,
-    amount_usd NUMERIC(8,2),
-    status VARCHAR(20),
-    booked_at TIMESTAMP WITH TIME ZONE,
-    travelled_at TIMESTAMP WITH TIME ZONE
-);
-
--- 11. 建立捷運搭乘紀錄 (metro_travels)
-CREATE TABLE metro_travels (
-    trip_id VARCHAR(10) PRIMARY KEY,
-    user_id VARCHAR(10) REFERENCES registered_users(user_id),
-    schedule_id VARCHAR(30) REFERENCES metro_schedules(schedule_id),
-    origin_station_id VARCHAR(10) REFERENCES metro_stations(station_id),
-    destination_station_id VARCHAR(10) REFERENCES metro_stations(station_id),
-    travel_date DATE NOT NULL,
-    ticket_type VARCHAR(20) NOT NULL,
-    day_pass_ref VARCHAR(10), 
-    stops_travelled INTEGER,
-    amount_usd NUMERIC(8,2),
-    status VARCHAR(20),
-    purchased_at TIMESTAMP WITH TIME ZONE,
-    travelled_at TIMESTAMP WITH TIME ZONE
-);
-
--- 12. 建立付款紀錄表 (payments)
-CREATE TABLE payments (
-    payment_id VARCHAR(10) PRIMARY KEY,
-    booking_id VARCHAR(10) NOT NULL, -- 這裡不設 REFERENCES 是因為它可能對應到鐵路(BK開頭)或捷運(MT開頭)
-    amount_usd NUMERIC(8,2) NOT NULL,
-    method VARCHAR(20) NOT NULL,
-    status VARCHAR(20) NOT NULL,
-    paid_at TIMESTAMP WITH TIME ZONE
-);
-
--- 13. 建立使用者回饋表 (feedback)
-CREATE TABLE feedback (
-    feedback_id VARCHAR(10) PRIMARY KEY,
-    booking_id VARCHAR(10) NOT NULL,
-    user_id VARCHAR(10) REFERENCES registered_users(user_id),
-    rating INTEGER CHECK (rating >= 1 AND rating <= 5), -- 設定檢查條件，分數只能在 1 到 5 之間
-    comment TEXT,
-    submitted_at TIMESTAMP WITH TIME ZONE
-);
--- ============================================================
---  VECTOR SCHEMA  (RAG / Help Desk) — do not modify
 -- ============================================================
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- Deletion strategy: relational application tables use soft delete via is_deleted
+-- so historical bookings, payments, and audit-sensitive data are preserved.
+-- Foreign keys therefore use ON DELETE RESTRICT to prevent hard deletion of
+-- referenced rows while dependent records still exist.
+
+-- ============================================================
+--  INFRASTRUCTURE: Stations
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS metro_stations (
+    id                                   BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    station_id                           VARCHAR(10)  NOT NULL UNIQUE,
+    name                                 VARCHAR(100) NOT NULL,
+    lines                                TEXT[]       NOT NULL DEFAULT '{}',
+    is_interchange_metro                 BOOLEAN      NOT NULL DEFAULT FALSE,
+    interchange_metro_lines              TEXT[]       NOT NULL DEFAULT '{}',
+    is_interchange_national_rail         BOOLEAN      NOT NULL DEFAULT FALSE,
+    interchange_national_rail_station_id VARCHAR(10),
+    created_at                           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at                           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    is_deleted                           BOOLEAN      NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS national_rail_stations (
+    id                                   BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    station_id                           VARCHAR(10)  NOT NULL UNIQUE,
+    name                                 VARCHAR(100) NOT NULL,
+    lines                                TEXT[]       NOT NULL DEFAULT '{}',
+    is_interchange_national_rail         BOOLEAN      NOT NULL DEFAULT FALSE,
+    interchange_national_rail_lines      TEXT[]       NOT NULL DEFAULT '{}',
+    is_interchange_metro                 BOOLEAN      NOT NULL DEFAULT FALSE,
+    interchange_metro_station_id         VARCHAR(10),
+    created_at                           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at                           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    is_deleted                           BOOLEAN      NOT NULL DEFAULT FALSE
+);
+
+-- ============================================================
+--  INFRASTRUCTURE: Metro Schedules
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS metro_schedules (
+    id                     BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    schedule_id            VARCHAR(20)    NOT NULL UNIQUE,
+    line                   VARCHAR(10)    NOT NULL,
+    direction              VARCHAR(20)    NOT NULL CHECK (direction IN ('northbound', 'southbound', 'eastbound', 'westbound')),
+    origin_station_id      VARCHAR(10)    NOT NULL REFERENCES metro_stations(station_id) ON DELETE RESTRICT,
+    destination_station_id VARCHAR(10)    NOT NULL REFERENCES metro_stations(station_id) ON DELETE RESTRICT,
+    first_train_time       TIMESTAMPTZ    NOT NULL,
+    last_train_time        TIMESTAMPTZ    NOT NULL,
+    base_fare_usd          DECIMAL(10,2)  NOT NULL,
+    per_stop_rate_usd      DECIMAL(10,2)  NOT NULL,
+    frequency_min          INTEGER        NOT NULL,
+    operates_on            TEXT[]         NOT NULL DEFAULT '{}',
+    created_at             TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    updated_at             TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    is_deleted             BOOLEAN        NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS metro_schedule_stops (
+    id                          BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    schedule_id                 VARCHAR(20)  NOT NULL REFERENCES metro_schedules(schedule_id) ON DELETE RESTRICT,
+    station_id                  VARCHAR(10)  NOT NULL REFERENCES metro_stations(station_id) ON DELETE RESTRICT,
+    stop_order                  INTEGER      NOT NULL,
+    travel_time_from_origin_min INTEGER      NOT NULL DEFAULT 0,
+    created_at                  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at                  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    is_deleted                  BOOLEAN      NOT NULL DEFAULT FALSE,
+    UNIQUE (schedule_id, stop_order)
+);
+
+-- ============================================================
+--  INFRASTRUCTURE: National Rail Schedules
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS national_rail_schedules (
+    id                     BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    schedule_id            VARCHAR(20)    NOT NULL UNIQUE,
+    line                   VARCHAR(10)    NOT NULL,
+    service_type           VARCHAR(20)    NOT NULL CHECK (service_type IN ('normal', 'express')),
+    direction              VARCHAR(20)    NOT NULL CHECK (direction IN ('northbound', 'southbound', 'eastbound', 'westbound')),
+    origin_station_id      VARCHAR(10)    NOT NULL REFERENCES national_rail_stations(station_id) ON DELETE RESTRICT,
+    destination_station_id VARCHAR(10)    NOT NULL REFERENCES national_rail_stations(station_id) ON DELETE RESTRICT,
+    first_train_time       TIMESTAMPTZ    NOT NULL,
+    last_train_time        TIMESTAMPTZ    NOT NULL,
+    frequency_min          INTEGER        NOT NULL,
+    operates_on            TEXT[]         NOT NULL DEFAULT '{}',
+    created_at             TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    updated_at             TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    is_deleted             BOOLEAN        NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS national_rail_schedule_stops (
+    id                          BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    schedule_id                 VARCHAR(20)  NOT NULL REFERENCES national_rail_schedules(schedule_id) ON DELETE RESTRICT,
+    station_id                  VARCHAR(10)  NOT NULL REFERENCES national_rail_stations(station_id) ON DELETE RESTRICT,
+    stop_order                  INTEGER      NOT NULL,
+    travel_time_from_origin_min INTEGER      NOT NULL DEFAULT 0,
+    created_at                  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at                  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    is_deleted                  BOOLEAN      NOT NULL DEFAULT FALSE,
+    UNIQUE (schedule_id, stop_order)
+);
+
+CREATE TABLE IF NOT EXISTS national_rail_fare_classes (
+    id                BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    schedule_id       VARCHAR(20)    NOT NULL REFERENCES national_rail_schedules(schedule_id) ON DELETE RESTRICT,
+    fare_class        VARCHAR(20)    NOT NULL CHECK (fare_class IN ('standard', 'first')),
+    base_fare_usd     DECIMAL(10,2)  NOT NULL,
+    per_stop_rate_usd DECIMAL(10,2)  NOT NULL,
+    created_at        TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    is_deleted        BOOLEAN        NOT NULL DEFAULT FALSE,
+    UNIQUE (schedule_id, fare_class)
+);
+
+-- ============================================================
+--  INFRASTRUCTURE: Seat Layouts (National Rail only)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS seats (
+    id          BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    schedule_id VARCHAR(20)  NOT NULL REFERENCES national_rail_schedules(schedule_id) ON DELETE RESTRICT,
+    coach       VARCHAR(5)   NOT NULL,
+    fare_class  VARCHAR(20)  NOT NULL CHECK (fare_class IN ('standard', 'first')),
+    seat_id     VARCHAR(10)  NOT NULL,
+    seat_row    INTEGER      NOT NULL,
+    seat_column VARCHAR(5)   NOT NULL,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    is_deleted  BOOLEAN      NOT NULL DEFAULT FALSE,
+    UNIQUE (schedule_id, seat_id),
+    UNIQUE (schedule_id, coach, seat_id, fare_class)
+);
+
+CREATE OR REPLACE VIEW seat_layouts AS
+SELECT
+    schedule_id,
+    coach,
+    fare_class,
+    seat_id,
+    seat_row,
+    seat_column
+FROM seats
+WHERE is_deleted = FALSE;
+
+-- ============================================================
+--  POLICIES: Ticket Types
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS ticket_types (
+    id           BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    ticket_type  VARCHAR(20)  NOT NULL UNIQUE,
+    display_name VARCHAR(50)  NOT NULL,
+    description  TEXT         NOT NULL,
+    available_on TEXT[]       NOT NULL DEFAULT '{}',
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    is_deleted   BOOLEAN      NOT NULL DEFAULT FALSE
+);
+
+-- ============================================================
+--  USERS (profile only — passwords are NOT stored here)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS users (
+    id            BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    user_id       VARCHAR(10)  NOT NULL UNIQUE,
+    first_name    VARCHAR(50)  NOT NULL,
+    surname       VARCHAR(50)  NOT NULL,
+    full_name     VARCHAR(100) NOT NULL,
+    email         VARCHAR(200) NOT NULL UNIQUE,
+    phone         VARCHAR(20),
+    date_of_birth TIMESTAMPTZ,
+    is_active     BOOLEAN      NOT NULL DEFAULT TRUE,
+    registered_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    is_deleted    BOOLEAN      NOT NULL DEFAULT FALSE
+);
+
+-- ============================================================
+--  AUTHENTICATION (separated from users per security rules)
+--  Password hashed with bcrypt (salt embedded in hash)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS user_credentials (
+    id              BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    user_id         VARCHAR(10)  NOT NULL UNIQUE REFERENCES users(user_id) ON DELETE RESTRICT,
+    password_hash   VARCHAR(255) NOT NULL,
+    secret_question VARCHAR(255) NOT NULL,
+    secret_answer_hash VARCHAR(255) NOT NULL,
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    is_deleted      BOOLEAN      NOT NULL DEFAULT FALSE
+);
+
+-- ============================================================
+--  TRANSACTIONS: National Rail Bookings
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS bookings (
+    id                     BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    booking_id             VARCHAR(20)    NOT NULL UNIQUE,
+    user_id                VARCHAR(10)    NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
+    schedule_id            VARCHAR(20)    NOT NULL REFERENCES national_rail_schedules(schedule_id) ON DELETE RESTRICT,
+    origin_station_id      VARCHAR(10)    NOT NULL REFERENCES national_rail_stations(station_id) ON DELETE RESTRICT,
+    destination_station_id VARCHAR(10)    NOT NULL REFERENCES national_rail_stations(station_id) ON DELETE RESTRICT,
+    travel_date            TIMESTAMPTZ    NOT NULL,
+    departure_time         TIMESTAMPTZ    NOT NULL,
+    ticket_type            VARCHAR(20)    NOT NULL DEFAULT 'single' REFERENCES ticket_types(ticket_type) ON DELETE RESTRICT,
+    fare_class             VARCHAR(20)    NOT NULL CHECK (fare_class IN ('standard', 'first')),
+    coach                  VARCHAR(5)     NOT NULL,
+    seat_id                VARCHAR(10)    NOT NULL,
+    stops_travelled        INTEGER        NOT NULL,
+    amount_usd             DECIMAL(10,2)  NOT NULL,
+    status                 VARCHAR(20)    NOT NULL DEFAULT 'confirmed' CHECK (status IN ('confirmed', 'completed', 'cancelled')),
+    booked_at              TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    travelled_at           TIMESTAMPTZ,
+    created_at             TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    updated_at             TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    is_deleted             BOOLEAN        NOT NULL DEFAULT FALSE,
+    FOREIGN KEY (schedule_id, fare_class)
+        REFERENCES national_rail_fare_classes(schedule_id, fare_class) ON DELETE RESTRICT,
+    FOREIGN KEY (schedule_id, coach, seat_id, fare_class)
+        REFERENCES seats(schedule_id, coach, seat_id, fare_class) ON DELETE RESTRICT
+);
+
+-- ============================================================
+--  TRANSACTIONS: Metro Travel History
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS metro_travel_history (
+    id                     BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    trip_id                VARCHAR(20)    NOT NULL UNIQUE,
+    user_id                VARCHAR(10)    NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
+    schedule_id            VARCHAR(20)    NOT NULL REFERENCES metro_schedules(schedule_id) ON DELETE RESTRICT,
+    origin_station_id      VARCHAR(10)    NOT NULL REFERENCES metro_stations(station_id) ON DELETE RESTRICT,
+    destination_station_id VARCHAR(10)    NOT NULL REFERENCES metro_stations(station_id) ON DELETE RESTRICT,
+    travel_date            TIMESTAMPTZ    NOT NULL,
+    ticket_type            VARCHAR(20)    NOT NULL DEFAULT 'single' REFERENCES ticket_types(ticket_type) ON DELETE RESTRICT,
+    day_pass_ref           VARCHAR(20),
+    stops_travelled        INTEGER,
+    amount_usd             DECIMAL(10,2)  NOT NULL DEFAULT 0.00,
+    status                 VARCHAR(20)    NOT NULL DEFAULT 'completed' CHECK (status IN ('completed', 'cancelled', 'refunded')),
+    purchased_at           TIMESTAMPTZ,
+    travelled_at           TIMESTAMPTZ,
+    created_at             TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    updated_at             TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    is_deleted             BOOLEAN        NOT NULL DEFAULT FALSE
+);
+
+-- ============================================================
+--  TRANSACTIONS: Payments
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS payments (
+    id         BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    payment_id VARCHAR(20)    NOT NULL UNIQUE,
+    booking_id VARCHAR(20)    REFERENCES bookings(booking_id) ON DELETE RESTRICT,
+    trip_id    VARCHAR(20)    REFERENCES metro_travel_history(trip_id) ON DELETE RESTRICT,
+    amount_usd DECIMAL(10,2)  NOT NULL CHECK (amount_usd >= 0),
+    method     VARCHAR(20)    NOT NULL CHECK (method IN ('credit_card', 'debit_card', 'ewallet')),
+    status     VARCHAR(20)    NOT NULL DEFAULT 'paid' CHECK (status IN ('paid', 'refunded', 'failed')),
+    paid_at    TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    is_deleted BOOLEAN        NOT NULL DEFAULT FALSE,
+    CHECK (
+        (booking_id IS NOT NULL AND trip_id IS NULL)
+        OR (booking_id IS NULL AND trip_id IS NOT NULL)
+    )
+);
+
+-- ============================================================
+--  FEEDBACK
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS feedbacks (
+    id           BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    feedback_id  VARCHAR(20)  NOT NULL UNIQUE,
+    booking_id   VARCHAR(20)  NOT NULL,
+    user_id      VARCHAR(10)  NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
+    rating       INTEGER      NOT NULL CHECK (rating >= 1 AND rating <= 5),
+    comment      TEXT,
+    submitted_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    is_deleted   BOOLEAN      NOT NULL DEFAULT FALSE
+);
+
+-- ============================================================
+--  POLICIES: Refund
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS refund_policies (
+    id           BIGSERIAL    PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    policy_id    VARCHAR(20)  NOT NULL UNIQUE,
+    label        VARCHAR(200) NOT NULL,
+    network_type VARCHAR(20)  NOT NULL,
+    service_type VARCHAR(20),
+    notes        TEXT,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    is_deleted   BOOLEAN      NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS refund_policy_windows (
+    id                         BIGSERIAL      PRIMARY KEY, -- BIGSERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
+    policy_id                  VARCHAR(20)    NOT NULL REFERENCES refund_policies(policy_id) ON DELETE RESTRICT,
+    window_id                  VARCHAR(20)    NOT NULL UNIQUE,
+    label                      VARCHAR(100)   NOT NULL,
+    condition_text             TEXT           NOT NULL,
+    hours_before_departure_min INTEGER,
+    hours_before_departure_max INTEGER,
+    refund_percent             INTEGER        NOT NULL DEFAULT 0,
+    admin_fee_usd              DECIMAL(10,2)  NOT NULL DEFAULT 0.00,
+    created_at                 TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    updated_at                 TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    is_deleted                 BOOLEAN        NOT NULL DEFAULT FALSE
+);
+
+-- ============================================================
+--  INDEXES
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_bookings_user_id
+    ON bookings(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_bookings_schedule_date
+    ON bookings(schedule_id, travel_date);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_bookings_active_seat_date
+    ON bookings(schedule_id, travel_date, seat_id)
+    WHERE status != 'cancelled' AND is_deleted = FALSE;
+
+CREATE INDEX IF NOT EXISTS idx_bookings_status
+    ON bookings(status);
+
+CREATE INDEX IF NOT EXISTS idx_metro_travel_user_id
+    ON metro_travel_history(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_payments_booking_id
+    ON payments(booking_id);
+
+CREATE INDEX IF NOT EXISTS idx_payments_trip_id
+    ON payments(trip_id);
+
+CREATE INDEX IF NOT EXISTS idx_feedbacks_booking_id
+    ON feedbacks(booking_id);
+
+CREATE INDEX IF NOT EXISTS idx_nr_stops_schedule_station
+    ON national_rail_schedule_stops(schedule_id, station_id);
+
+CREATE INDEX IF NOT EXISTS idx_ms_stops_schedule_station
+    ON metro_schedule_stops(schedule_id, station_id);
+
+CREATE INDEX IF NOT EXISTS idx_seats_schedule_class
+    ON seats(schedule_id, fare_class);
+
+-- ============================================================
+--  UPDATED_AT MAINTENANCE
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_metro_stations_updated_at ON metro_stations;
+CREATE TRIGGER trg_metro_stations_updated_at
+BEFORE UPDATE ON metro_stations
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_national_rail_stations_updated_at ON national_rail_stations;
+CREATE TRIGGER trg_national_rail_stations_updated_at
+BEFORE UPDATE ON national_rail_stations
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_metro_schedules_updated_at ON metro_schedules;
+CREATE TRIGGER trg_metro_schedules_updated_at
+BEFORE UPDATE ON metro_schedules
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_metro_schedule_stops_updated_at ON metro_schedule_stops;
+CREATE TRIGGER trg_metro_schedule_stops_updated_at
+BEFORE UPDATE ON metro_schedule_stops
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_national_rail_schedules_updated_at ON national_rail_schedules;
+CREATE TRIGGER trg_national_rail_schedules_updated_at
+BEFORE UPDATE ON national_rail_schedules
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_national_rail_schedule_stops_updated_at ON national_rail_schedule_stops;
+CREATE TRIGGER trg_national_rail_schedule_stops_updated_at
+BEFORE UPDATE ON national_rail_schedule_stops
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_national_rail_fare_classes_updated_at ON national_rail_fare_classes;
+CREATE TRIGGER trg_national_rail_fare_classes_updated_at
+BEFORE UPDATE ON national_rail_fare_classes
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_seats_updated_at ON seats;
+CREATE TRIGGER trg_seats_updated_at
+BEFORE UPDATE ON seats
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_ticket_types_updated_at ON ticket_types;
+CREATE TRIGGER trg_ticket_types_updated_at
+BEFORE UPDATE ON ticket_types
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_users_updated_at ON users;
+CREATE TRIGGER trg_users_updated_at
+BEFORE UPDATE ON users
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_user_credentials_updated_at ON user_credentials;
+CREATE TRIGGER trg_user_credentials_updated_at
+BEFORE UPDATE ON user_credentials
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_bookings_updated_at ON bookings;
+CREATE TRIGGER trg_bookings_updated_at
+BEFORE UPDATE ON bookings
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_metro_travel_history_updated_at ON metro_travel_history;
+CREATE TRIGGER trg_metro_travel_history_updated_at
+BEFORE UPDATE ON metro_travel_history
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_payments_updated_at ON payments;
+CREATE TRIGGER trg_payments_updated_at
+BEFORE UPDATE ON payments
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_feedbacks_updated_at ON feedbacks;
+CREATE TRIGGER trg_feedbacks_updated_at
+BEFORE UPDATE ON feedbacks
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_refund_policies_updated_at ON refund_policies;
+CREATE TRIGGER trg_refund_policies_updated_at
+BEFORE UPDATE ON refund_policies
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_refund_policy_windows_updated_at ON refund_policy_windows;
+CREATE TRIGGER trg_refund_policy_windows_updated_at
+BEFORE UPDATE ON refund_policy_windows
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+--  VECTOR SCHEMA  (RAG / Help Desk) — do not modify
+-- ============================================================
+
 CREATE TABLE IF NOT EXISTS policy_documents (
-    id          SERIAL       PRIMARY KEY,
+    id          SERIAL       PRIMARY KEY, -- SERIAL is reasonable for a single-database system with non-extreme data volume and no cross-service ID generation/exposure needs.
     title       VARCHAR(200) NOT NULL,
-    category    VARCHAR(50)  NOT NULL,  -- 'refund', 'booking', 'conduct'
+    category    VARCHAR(50)  NOT NULL,
     content     TEXT         NOT NULL,
-    -- 768-dim  → Ollama nomic-embed-text (default)
-    -- 3072-dim → Gemini gemini-embedding-001
-    -- If you switch LLM_PROVIDER to gemini, change to vector(3072) and reset the database.
     embedding   vector(768),
     source_file VARCHAR(200),
     created_at  TIMESTAMPTZ  DEFAULT NOW()
 );
 
--- Index for fast cosine similarity search
-CREATE INDEX IF NOT EXISTS policy_documents_hnsw ON policy_documents USING hnsw (embedding vector_cosine_ops);
-
--- ============================================================
--- # TASK 6 EXTENSION: Station Closures Log (即時車站封閉紀錄)
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS station_closures (
-    id SERIAL PRIMARY KEY,
-    station_id VARCHAR(10) NOT NULL,
-    reason TEXT NOT NULL,
-    closed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    reopened_at TIMESTAMPTZ,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE
-);
-
-CREATE INDEX IF NOT EXISTS idx_station_closures_active 
-    ON station_closures(is_active);
+CREATE INDEX IF NOT EXISTS idx_policy_documents_embedding
+    ON policy_documents USING hnsw (embedding vector_cosine_ops);
