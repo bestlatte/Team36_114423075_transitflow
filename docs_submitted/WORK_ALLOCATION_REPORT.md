@@ -19,17 +19,17 @@ or reassigned mid-project).
 
 ### Code Repository
 
-| Task                                                                                                                                                         | Primary Owner | Supporting Member(s) | Notes |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------- | -------------------- | ----- |
-| **Task 1** — Relational schema design (`schema.sql`)                                                                                                         | 李軒毅        | 黃昱鈞、柳炫州       |       |
-| **Task 2a** — Core availability & fare queries (`query_national_rail_availability`, `query_metro_schedules`, `query_national_rail_fare`, `query_metro_fare`) | 李軒毅        | 黃昱鈞、柳炫州       |       |
-| **Task 2b** — Seat & user queries (`query_available_seats`, `query_user_profile`, `query_user_bookings`, `query_payment_info`)                               | 李軒毅        | 黃昱鈞、柳炫州       |       |
-| **Task 2c** — Write operations (`execute_booking`, `execute_cancellation`)                                                                                   | 李軒毅        | 黃昱鈞、柳炫州       |       |
-| **Task 2d** — Authentication queries (`login_user`, `register_user`, `get_user_secret_question`, `verify_secret_answer`, `update_password`)                  | 李軒毅        | 黃昱鈞、柳炫州       |       |
-| **Task 3** — PostgreSQL seeding (`seed_postgres.py`)                                                                                                         | 李軒毅        | 黃昱鈞、柳炫州       |       |
-| **Task 4** — Neo4j graph design & seeding (`seed_neo4j.py`, `seed.cypher`)                                                                                   | 柳炫州        | 黃昱鈞、李軒毅       |       |
-| **Task 5** — Neo4j query functions (`graph/queries.py`)                                                                                                      | 柳炫州        | 黃昱鈞、李軒毅       |       |
-| **Task 6** _(if attempted)_ — Optional extension                                                                                                             | 黃昱鈞        | 黃昱鈞、李軒毅       |       |
+| Task                                                                                                                                                         | Primary Owner  | Supporting Member(s) | Notes |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- | -------------------- | ----- |
+| **Task 1** — Relational schema design (`schema.sql`)                                                                                                         | 李軒毅         | 黃昱鈞、柳炫州       |       |
+| **Task 2a** — Core availability & fare queries (`query_national_rail_availability`, `query_metro_schedules`, `query_national_rail_fare`, `query_metro_fare`) | 李軒毅         | 黃昱鈞、柳炫州       |       |
+| **Task 2b** — Seat & user queries (`query_available_seats`, `query_user_profile`, `query_user_bookings`, `query_payment_info`)                               | 李軒毅         | 黃昱鈞、柳炫州       |       |
+| **Task 2c** — Write operations (`execute_booking`, `execute_cancellation`)                                                                                   | 李軒毅         | 黃昱鈞、柳炫州       |       |
+| **Task 2d** — Authentication queries (`login_user`, `register_user`, `get_user_secret_question`, `verify_secret_answer`, `update_password`)                  | 李軒毅         | 黃昱鈞、柳炫州       |       |
+| **Task 3** — PostgreSQL seeding (`seed_postgres.py`)                                                                                                         | 李軒毅         | 黃昱鈞、柳炫州       |       |
+| **Task 4** — Neo4j graph design & seeding (`seed_neo4j.py`, `seed.cypher`)                                                                                   | 柳炫州         | 黃昱鈞、李軒毅       |       |
+| **Task 5** — Neo4j query functions (`graph/queries.py`)                                                                                                      | 柳炫州         | 黃昱鈞、李軒毅       |       |
+| **Task 6** _(if attempted)_ — Optional extension                                                                                                             | 黃昱鈞、柳炫周 | 李軒毅               |       |
 
 ### Design Document
 
