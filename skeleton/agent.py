@@ -62,7 +62,6 @@ from databases.graph.queries import (
     query_alternative_routes,
     query_interchange_path,
     query_delay_ripple,
-    execute_toggle_station_closure,
 )
 
 
@@ -322,7 +321,6 @@ make_booking(schedule_id, origin_station_id, destination_station_id, travel_date
 cancel_booking(booking_id)
 get_user_bookings()
 search_policy(query)
-toggle_station_closure(station_id, close_station)
 find_alternative_routes(origin_id, destination_id, avoid_station_id, network?)
 get_delay_ripple(station_id, hops?)"""
 

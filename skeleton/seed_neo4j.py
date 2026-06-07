@@ -67,7 +67,7 @@ def seed():
                 session.run("""
                     MATCH (a:Station {id: $origin_id})
                     MATCH (b:Station {id: $dest_id})
-                    MERGE (a)-[r:CONNECTS_TO {line: $line}]->(b)
+                    MERGE (a)-[r:METRO_LINK {line: $line}]->(b)
                     SET r.travel_time_min = $time,
                         r.standard_fare = 0.5,
                         r.first_class_fare = 0.5
@@ -81,7 +81,7 @@ def seed():
                 session.run("""
                     MATCH (a:Station {id: $origin_id})
                     MATCH (b:Station {id: $dest_id})
-                    MERGE (a)-[r:CONNECTS_TO {line: $line}]->(b)
+                    MERGE (a)-[r:RAIL_LINK {line: $line}]->(b)
                     SET r.travel_time_min = $time,
                         r.standard_fare = 1.0,
                         r.first_class_fare = 2.0
@@ -95,8 +95,8 @@ def seed():
                 session.run("""
                     MATCH (m:Metro {id: $m_id})
                     MATCH (r:NationalRail {id: $r_id})
-                    MERGE (m)-[:INTERCHANGE {travel_time_min: 5}]->(r)
-                    MERGE (r)-[:INTERCHANGE {travel_time_min: 5}]->(m)
+                    MERGE (m)-[:INTERCHANGE_TO {travel_time_min: 5}]->(r)
+                    MERGE (r)-[:INTERCHANGE_TO {travel_time_min: 5}]->(m)
                 """, m_id=s["station_id"], r_id=s["interchange_national_rail_station_id"])
         print("  Created Interchange links")
 
