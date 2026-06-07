@@ -59,7 +59,7 @@ def query_shortest_route(
     cypher = """
         MATCH (start:Station {id: $origin_id}), (end:Station {id: $destination_id})
         // 尋找 1 到 15 站之間的所有可能路線
-        MATCH p=(start)-[:CONNECTS_TO|INTERCHANGE*1..15]->(end)
+        MATCH p=(start)-[:METRO_LINK|RAIL_LINK|INTERCHANGE_TO*1..15]->(end)
         // 絕對防禦：這條路線上的「每一個」車站，都不可以是封閉狀態
         WHERE ALL(n IN nodes(p) WHERE n.is_closed = false OR n.is_closed IS NULL)
         // 自己把沿路的 travel_time_min 加總起來
@@ -106,7 +106,7 @@ def query_cheapest_route(
     
     cypher = f"""
         MATCH (start:Station {{id: $origin_id}}), (end:Station {{id: $destination_id}})
-        CALL apoc.algo.dijkstra(start, end, 'CONNECTS_TO|INTERCHANGE', '{weight_property}') YIELD path, weight
+        CALL apoc.algo.dijkstra(start, end, 'METRO_LINK|RAIL_LINK|INTERCHANGE_TO', '{weight_property}') YIELD path, weight
         RETURN weight as path_cost, nodes(path) as nodes, length(path) as legs
     """
     with _driver() as driver:
@@ -145,7 +145,7 @@ def query_alternative_routes(
     max_routes: int = 3,
 ) -> list[list[dict]]:
     cypher = """
-        MATCH p=(start:Station {id: $origin_id})-[:CONNECTS_TO|INTERCHANGE*..12]->(end:Station {id: $destination_id})
+        MATCH p=(start:Station {id: $origin_id})-[:METRO_LINK|RAIL_LINK|INTERCHANGE_TO*..12]->(end:Station {id: $destination_id})
         WHERE NONE(n IN nodes(p) WHERE n.id = $avoid_station_id)
         RETURN nodes(p) as nodes
         LIMIT $max_routes
@@ -197,7 +197,7 @@ def query_delay_ripple(delayed_station_id: str, hops: int = 2) -> list[dict]:
     # 完美防禦隱藏測資：使用 *0..hops，當 hops=0 時，距離為 0，只會回傳自己
     cypher = f"""
         MATCH (start:Station {{id: $delayed_station_id}})
-        MATCH p=(start)-[:CONNECTS_TO|INTERCHANGE*0..{int(hops)}]->(target:Station)
+        MATCH p=(start)-[:METRO_LINK|RAIL_LINK|INTERCHANGE_TO*0..{int(hops)}]->(target:Station)
         RETURN DISTINCT target.id as station_id, target.name as name, min(length(p)) as hops_away
         ORDER BY hops_away
     """
@@ -219,7 +219,7 @@ def query_delay_ripple(delayed_station_id: str, hops: int = 2) -> list[dict]:
 
 def query_station_connections(station_id: str) -> list[dict]:
     cypher = """
-        MATCH (start:Station {id: $station_id})-[r:CONNECTS_TO|INTERCHANGE]->(target:Station)
+        MATCH (start:Station {id: $station_id})-[r:METRO_LINK|RAIL_LINK|INTERCHANGE_TO]->(target:Station)
         RETURN target.id as station_id, target.name as name, type(r) as connection_type, 
                coalesce(r.line, 'Interchange Walk') as line, coalesce(r.travel_time_min, 5) as time
     """
