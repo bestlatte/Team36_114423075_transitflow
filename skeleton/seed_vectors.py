@@ -23,10 +23,13 @@ import time
 import os
 import json
 import sys
+import psycopg2
+
 sys.path.insert(0, ".")
 
 from databases.relational.queries import store_policy_document
 from skeleton.llm_provider import llm
+from skeleton import config as cfg
 
 _DATA_DIR = os.path.normpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -41,6 +44,31 @@ def _load(filename):
 
 def _text(data):
     return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+def clear_policy_documents():
+    # Prevent duplicate vector documents when this seeder is run multiple times.
+    # Since policy documents are fully rebuilt from JSON files on every run,
+    # it is safe to clear the existing RAG documents before inserting the latest ones.
+    conn = psycopg2.connect(
+        host=cfg.PG_HOST,
+        port=cfg.PG_PORT,
+        dbname=cfg.PG_DB,
+        user=cfg.PG_USER,
+        password=cfg.PG_PASSWORD,
+    )
+    cur = conn.cursor()
+
+    try:
+        cur.execute("TRUNCATE TABLE policy_documents RESTART IDENTITY;")
+        conn.commit()
+        print("Existing policy documents cleared to prevent duplicate vector records.")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
 
 
 def build_documents():
@@ -104,6 +132,8 @@ def build_documents():
 
 
 def seed():
+    clear_policy_documents()
+
     documents = build_documents()
     print(
         f"📄 Embedding {len(documents)} policy documents using {llm.chat_provider}...\n")
