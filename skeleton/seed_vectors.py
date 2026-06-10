@@ -8,24 +8,32 @@ This script:
   2. Embeds each document using the configured LLM provider
   3. Stores the text + vector in PostgreSQL (policy_documents table)
 
-Note: Gemini free tier has ~1500 requests/minute — this script makes ~13 calls, well within limits.
+# TASK 6 EXTENSION:
+# This seeder was extended to load service_disruption_policy.json so that
+# the RAG knowledge base can answer questions about station closures,
+# replacement buses, severe disruptions, and alternative transport reimbursement.
+
+Note: Gemini free tier has ~1500 requests/minute — this script makes several embedding calls, well within limits.
 
 Students: To extend the assistant's knowledge, add entries to the JSON files in
 train-mock-data/ and re-run this script.
 """
 
-import json
-import os
-import sys
 import time
+import os
+import json
+import sys
+import psycopg2
 
 sys.path.insert(0, ".")
 
-from skeleton.llm_provider import llm
 from databases.relational.queries import store_policy_document
+from skeleton.llm_provider import llm
+from skeleton import config as cfg
 
 _DATA_DIR = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "train-mock-data")
+    os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                 "..", "train-mock-data")
 )
 
 
@@ -36,6 +44,31 @@ def _load(filename):
 
 def _text(data):
     return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+def clear_policy_documents():
+    # Prevent duplicate vector documents when this seeder is run multiple times.
+    # Since policy documents are fully rebuilt from JSON files on every run,
+    # it is safe to clear the existing RAG documents before inserting the latest ones.
+    conn = psycopg2.connect(
+        host=cfg.PG_HOST,
+        port=cfg.PG_PORT,
+        dbname=cfg.PG_DB,
+        user=cfg.PG_USER,
+        password=cfg.PG_PASSWORD,
+    )
+    cur = conn.cursor()
+
+    try:
+        cur.execute("TRUNCATE TABLE policy_documents RESTART IDENTITY;")
+        conn.commit()
+        print("Existing policy documents cleared to prevent duplicate vector records.")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
 
 
 def build_documents():
@@ -81,12 +114,29 @@ def build_documents():
                 "content": _text({section: tp[section]}),
             })
 
+    # TASK 6 EXTENSION:
+    # service_disruption_policy.json adds new vector/RAG knowledge entries for
+    # service disruption scenarios. Each policy is stored as one independent
+    # document so pgvector can retrieve the exact rule most relevant to a user
+    # question, such as station closures, replacement buses, severe disruption
+    # refunds, or alternative transport reimbursement.
+    for policy in _load("service_disruption_policy.json"):
+        docs.append({
+            "title": policy["label"],
+            "category": "service_disruption",
+            "source_file": "service_disruption_policy.json",
+            "content": _text(policy),
+        })
+
     return docs
 
 
 def seed():
+    clear_policy_documents()
+
     documents = build_documents()
-    print(f"📄 Embedding {len(documents)} policy documents using {llm.chat_provider}...\n")
+    print(
+        f"📄 Embedding {len(documents)} policy documents using {llm.chat_provider}...\n")
 
     for i, doc in enumerate(documents):
         print(f"  [{i+1}/{len(documents)}] Embedding: {doc['title']}")
@@ -95,8 +145,10 @@ def seed():
             embedding = llm.embed(doc["content"])
 
             if len(embedding) != llm.embed_dim:
-                print(f"    ⚠️  Unexpected embedding dim: {len(embedding)} (expected {llm.embed_dim})")
-                print(f"    Update GEMINI_EMBED_DIM or OLLAMA_EMBED_DIM in skeleton/config.py")
+                print(
+                    f"    ⚠️  Unexpected embedding dim: {len(embedding)} (expected {llm.embed_dim})")
+                print(
+                    f"    Update GEMINI_EMBED_DIM or OLLAMA_EMBED_DIM in skeleton/config.py")
                 sys.exit(1)
 
             doc_id = store_policy_document(

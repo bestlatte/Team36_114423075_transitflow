@@ -1,0 +1,36 @@
+---
+description: 資料庫設計與安全規範，涵蓋命名、資料型態、安全與事務處理
+alwaysApply: true
+---
+
+# 資料庫設計規範 (Database Conventions)
+
+## 1. 命名規範 (Naming Rules)
+
+- **規則 1：** 所有資料表、欄位名稱一律使用小寫字母，單字之間以下底線 (`_`) 分隔（例如：`user_profiles`，而非 `UserProfile` 或 `userProfiles`）。
+- **規則 2：** 資料表名稱一律使用複數名詞（如 `orders`, `products`），關聯表命名採用 `tableA_tableB` 的格式。
+- **規則 3：** 主鍵欄位一律命名為 `id`，外鍵欄位一律命名為 `實體名_id`（如 `user_id`）。
+
+## 2. 資料型態與結構規範 (Data Type Rules)
+
+- **規則 4：** 禁止使用 `SELECT *`，在核心業務中必須明確指定查詢欄位。
+- **規則 5：** 每張表必須包含以下四個「黃金欄位」：
+  - `id`（主鍵, BigInt / UUID）
+  - `created_at`（建立時間, Timestamp）
+  - `updated_at`（更新時間, Timestamp）
+  - `is_deleted` 或 `deleted_at`（軟刪除標記，禁止物理刪除核心業務資料）
+- **規則 6：** 儲存金額、成數等精準數字時，嚴禁使用 `Float`/`Double`，必須使用 `DECIMAL` 型態以防精度丟失。
+- **規則 7：** 欄位盡可能設定為 `NOT NULL`，並給予合理的預設值（Default Value），避免 NULL 值造成的邏輯判斷混亂與索引失效。
+
+## 3. 安全與事務規範 (Security & Transaction Rules)
+
+- **規則 8：** 涉及多表更新、資金扣減等操作，必須使用事務 (Transaction)，且必須遵循 ACID 原則，保持事務範圍儘可能小。
+- **規則 9：** 嚴禁在資料庫中明文儲存密碼或敏感隱私資料（如身份證、信用卡號），密碼必須經過強雜湊（如 bcrypt）加密，隱私資料需去識別化或加密儲存。
+
+## 專案注意事項（違規被當）
+
+1. 密碼**不能用 MD5**
+2. 密碼**不能放在 user table**（須獨立存放於 credentials / auth 表）
+3. 密碼**不能使用明碼**
+4. **SHA 系列不安全**（至少使用 bcrypt）
+5. **必須使用 salt**，且 salt 與 password hash 必須放在一起

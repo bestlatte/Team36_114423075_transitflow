@@ -1,0 +1,109 @@
+[
+  {
+    "policy_id": "SD001",
+    "label": "Station Closure Policy",
+    "applies_to": {
+      "network_type": "all",
+      "service_types": ["normal", "express"],
+      "ticket_types": ["single", "return", "day_pass"]
+    },
+    "closure_types": [
+      {
+        "type_id": "SD001_T1",
+        "label": "Temporary station closure",
+        "condition": "A station is temporarily closed due to maintenance, crowd control, safety inspection, or local disruption.",
+        "passenger_guidance": "Passengers should use the nearest available alternative station or follow staff instructions for replacement transport.",
+        "ticket_validity": "Valid tickets remain accepted for the affected journey on reasonable alternative routes within the same network on the same travel date."
+      },
+      {
+        "type_id": "SD001_T2",
+        "label": "Full-day station closure",
+        "condition": "A station is closed for the entire service day due to planned engineering work or an emergency incident.",
+        "passenger_guidance": "Passengers should use published alternative stations, replacement bus stops, or customer service instructions.",
+        "ticket_validity": "Passengers may use the same ticket on approved alternative routes or request a refund if the journey cannot reasonably be completed."
+      }
+    ],
+    "refund_policy": "If the station closure prevents the passenger from completing the intended journey and no reasonable alternative transport is provided, the passenger may request a full refund for the unused journey.",
+    "notes": "Station closure compensation does not apply when the passenger chooses not to travel despite an available reasonable alternative route."
+  },
+  {
+    "policy_id": "SD002",
+    "label": "Replacement Bus Service Policy",
+    "applies_to": {
+      "network_type": "all",
+      "service_types": ["normal", "express"],
+      "ticket_types": ["single", "return", "day_pass"]
+    },
+    "replacement_bus_rules": [
+      {
+        "rule_id": "SD002_R1",
+        "condition": "Rail or metro service is suspended on part of the route and a replacement bus service is provided.",
+        "ticket_validity": "Existing tickets for the affected journey are accepted on the replacement bus without an additional fare.",
+        "boarding_rule": "Passengers should board replacement buses at designated stops announced by staff, station signs, or the TransitFlow service notice."
+      },
+      {
+        "rule_id": "SD002_R2",
+        "condition": "The replacement bus significantly increases the expected journey time by 60 minutes or more.",
+        "compensation": "Passengers may request delay compensation according to the delay compensation policy if the delay was caused by operator fault.",
+        "how_to_claim": "Submit a claim via the app or customer service within 28 days of the travel date."
+      }
+    ],
+    "accessibility": "Replacement buses may have limited wheelchair capacity. Passengers requiring step-free access should contact station staff or customer service for an accessible alternative.",
+    "notes": "Replacement bus services are intended to complete the original journey, not to provide unlimited travel outside the affected route."
+  },
+  {
+    "policy_id": "SD003",
+    "label": "Severe Service Disruption Refund Policy",
+    "applies_to": {
+      "network_type": "all",
+      "service_types": ["normal", "express"],
+      "ticket_types": ["single", "return", "day_pass"]
+    },
+    "severe_disruption_rules": [
+      {
+        "rule_id": "SD003_R1",
+        "condition": "A journey cannot be completed because services are suspended and no reasonable alternative transport is available.",
+        "refund": "100% refund of the unused journey fare.",
+        "how_to_claim": "Submit the booking reference and disruption details via the app or customer service within 28 days of the travel date."
+      },
+      {
+        "rule_id": "SD003_R2",
+        "condition": "A passenger abandons the journey after starting travel because the remaining service is suspended.",
+        "refund": "Refund is calculated for the unused portion of the journey where the passenger could not reasonably continue.",
+        "how_to_claim": "Submit claim evidence, including booking reference and affected station or route, within 28 days of travel."
+      },
+      {
+        "rule_id": "SD003_R3",
+        "condition": "The disruption is caused by extreme weather, security incidents, government directives, or passenger-caused incidents.",
+        "refund": "Refund eligibility is reviewed case by case. Delay compensation may be excluded when the cause is outside operator control.",
+        "how_to_claim": "Contact customer service with travel details and supporting evidence."
+      }
+    ],
+    "notes": "This policy is separate from normal voluntary cancellation rules. It applies when the operator cannot provide the booked transport service as planned."
+  },
+  {
+    "policy_id": "SD004",
+    "label": "Alternative Transport Reimbursement Policy",
+    "applies_to": {
+      "network_type": "all",
+      "service_types": ["normal", "express"],
+      "ticket_types": ["single", "return", "day_pass"]
+    },
+    "reimbursement_rules": [
+      {
+        "rule_id": "SD004_R1",
+        "condition": "The operator announces that passengers may arrange their own alternative transport due to severe service disruption.",
+        "reimbursement": "Reasonable alternative transport costs may be reimbursed up to USD 10.00 per passenger.",
+        "required_evidence": "Original receipt, booking reference, affected route, and travel date."
+      },
+      {
+        "rule_id": "SD004_R2",
+        "condition": "A passenger arranges alternative transport without operator instruction while replacement transport is available.",
+        "reimbursement": "Alternative transport costs are normally not reimbursed.",
+        "required_evidence": "Customer service may review exceptional circumstances case by case."
+      }
+    ],
+    "claim_window_days": 28,
+    "notes": "Alternative transport reimbursement does not replace the normal ticket refund process. A passenger may be eligible for either refund, reimbursement, or both depending on the disruption case."
+  }
+]

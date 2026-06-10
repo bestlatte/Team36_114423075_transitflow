@@ -27,6 +27,14 @@ Your goal is to make the database queries richer by:
 The agent will automatically use whatever you put in the databases.
 """
 
+# TASK 6 EXTENSION:
+# This file includes routing support for two optional extensions:
+# 1. Vector/RAG extension: routes service disruption policy questions
+#    such as replacement bus, severe disruption refund, and alternative
+#    transport reimbursement to search_policy.
+# 2. Graph extension: routes explicit station open/close commands to
+#    toggle_station_closure so Neo4j can update station operational status.
+
 from __future__ import annotations
 
 import json
@@ -95,6 +103,12 @@ def _inject_station_ids(text: str) -> str:
             result = pattern.sub(f"{name} ({sid})", result)
             seen_ids.add(sid)
     return result
+
+
+def _extract_iso_date(text: str) -> Optional[str]:
+    """Return the first YYYY-MM-DD date mentioned in text, if any."""
+    match = re.search(r'\b\d{4}-\d{2}-\d{2}\b', text)
+    return match.group(0) if match else None
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
@@ -224,12 +238,19 @@ TOOLS = [
         },
         "required": ["booking_id"],
     },
+    # TASK 6 EXTENSION: Vector/RAG policy retrieval
+    # The service_disruption_policy.json entries are embedded into pgvector.
+    # This tool description was extended so replacement bus, suspended service,
+    # severe disruption refund, and alternative transport reimbursement questions
+    # are routed to the RAG policy search.
     {
         "name": "search_policy",
         "description": (
             "Search company policy documents. Use for any question about: "
-            "refunds, delay compensation, luggage, bicycles, pets, food and drink, "
-            "conduct, booking rules, ticket types, fare evasion, or child fares."
+            "refunds, delay compensation, service disruption, station closures, "
+            "replacement buses, suspended routes, alternative transport reimbursement, "
+            "luggage, bicycles, pets, food and drink, conduct, booking rules, "
+            "ticket types, fare evasion, or child fares."
         ),
         "parameters": {
             "query": {"type": "string", "description": "Natural language question about policy"},
@@ -271,6 +292,21 @@ TOOLS = [
             "hops":       {"type": "integer", "description": "How many connections out to check (default 2)"},
         },
         "required": ["station_id"],
+    },
+    # TASK 6 EXTENSION: Graph station closure control
+    # This tool lets the agent change a station's operational status in Neo4j.
+    # Closed stations can then be avoided by graph route queries.
+    {
+        "name": "toggle_station_closure",
+        "description": (
+            "Change the operational status of a station (open or closed). "
+            "Use this when a user reports an emergency, accident, or explicitly asks to close/open a station."
+        ),
+        "parameters": {
+            "station_id": {"type": "string", "description": "Station ID e.g. NR03"},
+            "close_station": {"type": "boolean", "description": "True to close the station, False to reopen it"},
+        },
+        "required": ["station_id", "close_station"],
     },
 ]
 
@@ -322,7 +358,8 @@ def _execute_tool(
                 destination_id=params["destination_id"],
             )
             if not schedules:
-                result = {"error": "No metro service found between these stations."}
+                result = {
+                    "error": "No metro service found between these stations."}
             else:
                 sched = schedules[0]
                 stops = sched.get("stops_in_order") or []
@@ -330,7 +367,8 @@ def _execute_tool(
                     import json as _json
                     stops = _json.loads(stops)
                 try:
-                    n_stops = stops.index(params["destination_id"]) - stops.index(params["origin_id"])
+                    n_stops = stops.index(
+                        params["destination_id"]) - stops.index(params["origin_id"])
                 except ValueError:
                     n_stops = 1
                 fare = query_metro_fare(sched["schedule_id"], n_stops)
@@ -395,15 +433,16 @@ def _execute_tool(
             ]
 
         elif tool_name == "find_route":
-            origin_id      = params["origin_id"]
+            origin_id = params["origin_id"]
             destination_id = params["destination_id"]
-            network        = params.get("network", "auto")
-            optimise_by    = params.get("optimise_by", "time")
+            network = params.get("network", "auto")
+            optimise_by = params.get("optimise_by", "time")
 
             # Detect cross-network routing (one MS, one NR)
             is_cross = (
                 (origin_id.upper().startswith("MS") and destination_id.upper().startswith("NR")) or
-                (origin_id.upper().startswith("NR") and destination_id.upper().startswith("MS"))
+                (origin_id.upper().startswith("NR")
+                 and destination_id.upper().startswith("MS"))
             )
 
             if is_cross:
@@ -428,7 +467,15 @@ def _execute_tool(
                 avoid_station_id=params["avoid_station_id"],
                 network=params.get("network", "auto"),
             )
-            result = [{"route_number": i + 1, "legs": r} for i, r in enumerate(routes)]
+            result = [{"route_number": i + 1, "legs": r}
+                      for i, r in enumerate(routes)]
+        # TASK 6 EXTENSION: Graph station closure execution
+        # Calls Neo4j to mark a station as open or closed.
+        # Routing queries then use the station's is_closed status.
+        elif tool_name == "toggle_station_closure":
+            result = execute_toggle_station_closure(**params)
+
+
 
         elif tool_name == "get_delay_ripple":
             result = query_delay_ripple(
@@ -606,6 +653,11 @@ JSON:"""
     if llm.get_chat_provider() == "ollama":
         # llama3.2:1b is fine-tuned for native tool calling — far more reliable than
         # prompt-based JSON routing which produces malformed output on 1B models.
+
+        # TASK 6 EXTENSION:
+        # The router prompt includes both extensions:
+        # - close/open station commands should use toggle_station_closure
+        # - service disruption policy questions should use search_policy
         tool_calls = llm.ollama_tool_call(
             recent_history, TOOLS, _augmented_message,
             system_prompt=(
@@ -614,8 +666,8 @@ JSON:"""
                 "My bookings/tickets/travel history → get_user_bookings (no params). "
                 "Book a ticket / make a booking → check_national_rail_availability first, then make_booking. "
                 "Cancel a booking → cancel_booking. "
-                "Policy/rules/conduct/compensation/luggage/bicycle questions → search_policy. "
-                "Route/directions/fastest/quickest/how-to-get/path questions → find_route ONLY (never get_metro_fare). "
+                "Station closure, emergency, or changing station status -> toggle_station_closure. "
+                "Policy/rules/conduct/compensation/luggage/bicycle/replacement bus/refund/service disruption/suspended service/alternative transport/reimbursement questions → search_policy. "                "Route/directions/fastest/quickest/how-to-get/path questions → find_route ONLY (never get_metro_fare). "
                 "Metro fare/price/cost/how-much-does-it-cost questions → get_metro_fare. "
                 "Rail fare/cost/price questions → check_national_rail_availability then get_national_rail_fare. "
                 "Schedule/timetable/trains/services questions → check_national_rail_availability or check_metro_availability. "
@@ -638,8 +690,10 @@ JSON:"""
     # Rules below cover every common query type.  Each rule only fires when the
     # correct tool is not already selected with valid required params.
     _lower = _augmented_message.lower()
-    _station_ids = re.findall(r'\b(MS\d{2}|NR\d{2})\b', _augmented_message, re.IGNORECASE)
+    _station_ids = re.findall(
+        r'\b(MS\d{2}|NR\d{2})\b', _augmented_message, re.IGNORECASE)
     _two_stations = len(_station_ids) >= 2
+    _mentioned_date = _extract_iso_date(_augmented_message)
 
     def _tool_selected(name: str, *required_params) -> bool:
         """Return True only if tool `name` is in tool_calls with all required params set."""
@@ -664,9 +718,11 @@ JSON:"""
         (_two_stations and "route" in _lower)
     )
     if _is_route and _two_stations and not _tool_selected("find_route", "origin_id", "destination_id"):
-        _opt = "cost" if any(kw in _lower for kw in ["cheap", "cheapest", "lowest cost"]) else "time"
+        _opt = "cost" if any(kw in _lower for kw in [
+                             "cheap", "cheapest", "lowest cost"]) else "time"
         _fallback("find_route",
-                  {"origin_id": _station_ids[0].upper(), "destination_id": _station_ids[1].upper(), "optimise_by": _opt},
+                  {"origin_id": _station_ids[0].upper(
+                  ), "destination_id": _station_ids[1].upper(), "optimise_by": _opt},
                   "route query")
 
     # 2. Availability / trains / schedules between two stations
@@ -675,33 +731,49 @@ JSON:"""
                            "schedule", "timetable", "available", "availability"}
         if any(kw in _lower for kw in _avail_triggers):
             o, d = _station_ids[0].upper(), _station_ids[1].upper()
-            _travel_date = next(
-                (w for w in _lower.split() if re.match(r'\d{4}-\d{2}-\d{2}', w)), None
-            )
             _params = {"origin_id": o, "destination_id": d}
-            if _travel_date:
-                _params["travel_date"] = _travel_date
-            _tool = "check_national_rail_availability" if o.startswith("NR") else "check_metro_availability"
+            if _mentioned_date:
+                _params["travel_date"] = _mentioned_date
+            _tool = "check_national_rail_availability" if o.startswith(
+                "NR") else "check_metro_availability"
             _fallback(_tool, _params, "availability query")
 
     # 3. Personal booking history — requires login
     if current_user_email and not tool_calls:
         _personal_triggers = {"my booking", "my ticket", "my trip", "my journey", "my history",
-                               "my reservation", "show booking", "view booking", "check booking",
-                               "list booking", "show my", "view my"}
+                              "my reservation", "show booking", "view booking", "check booking",
+                              "list booking", "show my", "view my"}
         if any(kw in _lower for kw in _personal_triggers):
             _fallback("get_user_bookings", {}, "personal booking query")
+
+    # 4. Deterministic parameter repair for selected tools.
+    # Native tool calling can omit optional fields such as travel_date even when
+    # the user explicitly typed a date; preserve the chosen tool and add it.
+    for call in tool_calls:
+        name = call.get("name")
+        params = call.setdefault("params", call.get("parameters") or {})
+        if (
+            _mentioned_date
+            and name == "check_national_rail_availability"
+            and not params.get("travel_date")
+        ):
+            params["travel_date"] = _mentioned_date
+            if debug:
+                debug_info.append(
+                    f"**Param repair:** added travel_date={_mentioned_date} to {name}"
+                )
 
     # Step 2: Execute each tool call against the real databases
     tool_results = []
     for call in tool_calls:
         tool_name = call.get("name", "")
-        params    = call.get("params") or call.get("parameters", {})
+        params = call.get("params") or call.get("parameters", {})
 
         # Skip calls with empty string values — LLM failed to extract params
         if any(v == "" for v in params.values()):
             if debug:
-                debug_info.append(f"**Skipped** `{tool_name}` — empty params: {params}")
+                debug_info.append(
+                    f"**Skipped** `{tool_name}` — empty params: {params}")
             continue
 
         if debug:

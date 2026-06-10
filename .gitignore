@@ -20,6 +20,7 @@ __pycache__/
 # Virtual environments
 venv/
 .venv/
+.venv-codex/
 env/
 ENV/
 
@@ -59,3 +60,12 @@ gradio_cached_examples/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# grading files
+/IM2002-grading-students
+
+# task6 dir
+/task6
+
+# Team allocation files
+Team36_WORK_ALLOCATION.md
